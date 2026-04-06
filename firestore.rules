@@ -1,0 +1,79 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: projects
+    // Fields: name, model, targetQuantity, foDate, createdAt, sortOrder
+    //
+    // Collection: processes
+    // Fields: projectId, name, targetDate, progress
+    //
+    // Collection: tasks
+    // Fields: projectId, processName, type, description, status
+    //
+    // Collection: users
+    // Fields: initials, password, isAuthorized
+    //
+    // Collection: processParts
+    // Fields: projectId, processName, moldNo, drwNo, s, partsName, completedAt, delayReason, delayType, order
+    //
+    // ===============================================================
+
+    // Helper functions
+    function isAuthenticated() {
+      return true; // Simple password-based auth for this app
+    }
+
+    function isValidProject(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.model is string && data.model.size() > 0 && data.model.size() < 100 &&
+             data.targetQuantity is number &&
+             data.foDate is string &&
+             data.createdAt is string;
+    }
+
+    function isValidProcess(data) {
+      return data.projectId is string &&
+             data.name is string &&
+             data.targetDate is string &&
+             data.progress is number && data.progress >= 0 && data.progress <= 100;
+    }
+
+    function isValidTask(data) {
+      return data.projectId is string &&
+             data.processName is string &&
+             data.type is string &&
+             data.description is string &&
+             data.status in ['pending', 'in-progress', 'completed'];
+    }
+
+    function isValidPart(data) {
+      return data.projectId is string &&
+             data.processName is string &&
+             data.moldNo is string &&
+             data.drwNo is string &&
+             data.s is string &&
+             data.partsName is string &&
+             data.order is number;
+    }
+
+    match /projects/{projectId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /processes/{processId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /tasks/{taskId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /users/{userId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /processParts/{partId} {
+      allow read, write: if isAuthenticated();
+    }
+  }
+}

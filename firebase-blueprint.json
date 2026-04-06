@@ -1,0 +1,77 @@
+{
+  "entities": {
+    "Project": {
+      "title": "Project",
+      "description": "Production project information",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "model": { "type": "string" },
+        "targetQuantity": { "type": "number" },
+        "foDate": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "model", "targetQuantity", "foDate", "createdAt"]
+    },
+    "Process": {
+      "title": "Process",
+      "description": "Production process information for a project",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "name": { "type": "string" },
+        "targetDate": { "type": "string", "format": "date-time" },
+        "progress": { "type": "number" }
+      },
+      "required": ["projectId", "name", "targetDate", "progress"]
+    },
+    "Task": {
+      "title": "Task",
+      "description": "Individual task within a process",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "processName": { "type": "string" },
+        "type": { "type": "string" },
+        "description": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "in-progress", "completed"] }
+      },
+      "required": ["projectId", "processName", "type", "description", "status"]
+    },
+    "UserConfig": {
+      "title": "UserConfig",
+      "description": "User initials and password for login",
+      "type": "object",
+      "properties": {
+        "initials": { "type": "string" },
+        "password": { "type": "string" }
+      },
+      "required": ["initials", "password"]
+    },
+    "ProcessPart": {
+      "title": "ProcessPart",
+      "description": "Part information for a specific process within a project",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "processName": { "type": "string" },
+        "moldNo": { "type": "string" },
+        "drwNo": { "type": "string" },
+        "s": { "type": "string" },
+        "partsName": { "type": "string" },
+        "completedAt": { "type": "string", "format": "date-time" },
+        "delayReason": { "type": "string" },
+        "delayType": { "type": "string" },
+        "order": { "type": "number" }
+      },
+      "required": ["projectId", "processName", "moldNo", "drwNo", "s", "partsName", "order"]
+    }
+  },
+  "firestore": {
+    "/projects/{projectId}": { "schema": "Project", "description": "Projects collection" },
+    "/processes/{processId}": { "schema": "Process", "description": "Processes collection" },
+    "/tasks/{taskId}": { "schema": "Task", "description": "Tasks collection" },
+    "/users/{userId}": { "schema": "UserConfig", "description": "Users collection for login" },
+    "/processParts/{partId}": { "schema": "ProcessPart", "description": "Process parts collection" }
+  }
+}

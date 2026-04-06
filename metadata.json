@@ -1,0 +1,5 @@
+{
+  "name": "AJIN Production Flow Manager",
+  "description": "A simple and intuitive production process management application with real-time tracking, D-Day calculations, and task-level progress monitoring.",
+  "requestFramePermissions": []
+}
