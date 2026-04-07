@@ -522,6 +522,10 @@ function Dashboard() {
 
   const handleUpdateProject = async (id: string, data: Partial<Project>) => {
     const project = projects.find(p => p.id === id);
+    if (project?.status === 'completed') {
+      showAlert('수정 불가', '생산 완료된 프로젝트는 수정할 수 없습니다.', 'error');
+      return;
+    }
     if (project && data.foDate && project.foDate.split('T')[0] !== data.foDate.split('T')[0]) {
       const history = project.foDateHistory || [];
       data.foDateHistory = [...history, project.foDate];
@@ -531,6 +535,11 @@ function Dashboard() {
   };
 
   const handleDeleteProject = async (id: string) => {
+    const project = projects.find(p => p.id === id);
+    if (project?.status === 'completed') {
+      showAlert('삭제 불가', '생산 완료된 프로젝트는 삭제할 수 없습니다.', 'error');
+      return;
+    }
     const isAuthorized = userInitials === 'MASTER' || localStorage.getItem('isAuthorized') === 'true';
     if (!isAuthorized) {
       showAlert('권한 없음', '데이터 삭제 권한이 없습니다.', 'error');
@@ -639,6 +648,11 @@ function Dashboard() {
   };
 
   const handleUploadExcel = async (projectId: string, processName: string, file: File) => {
+    const project = projects.find(p => p.id === projectId);
+    if (project?.status === 'completed') {
+      showAlert('업로드 불가', '생산 완료된 프로젝트는 데이터를 수정할 수 없습니다.', 'error');
+      return;
+    }
     const reader = new FileReader();
     reader.onload = async (e) => {
       try {
@@ -754,6 +768,7 @@ function Dashboard() {
               drwNo: drwIdx !== -1 && row[drwIdx] ? String(row[drwIdx]) : (row[1] ? String(row[1]) : ''),
               s: sIdx !== -1 && row[sIdx] ? String(row[sIdx]) : (row[2] ? String(row[2]) : ''),
               partsName: nameIdx !== -1 && row[nameIdx] ? String(row[nameIdx]) : (row[3] ? String(row[3]) : ''),
+              plannedAt: null,
               completedAt: null,
               delayReason: '',
               delayType: '',
@@ -776,6 +791,8 @@ function Dashboard() {
   };
 
   const handleBatchUpdateParts = async (updates: { id: string, data: Partial<ProcessPart> }[], projectId: string, processName: string) => {
+    const project = projects.find(p => p.id === projectId);
+    if (project?.status === 'completed') return;
     for (const update of updates) {
       // Sanitize data to remove undefined values
       const sanitizedData = Object.fromEntries(
@@ -787,6 +804,8 @@ function Dashboard() {
   };
 
   const handleUpdatePart = async (partId: string, data: Partial<ProcessPart>, projectId: string, processName: string) => {
+    const project = projects.find(p => p.id === projectId);
+    if (project?.status === 'completed') return;
     // Sanitize data to remove undefined values
     const sanitizedData = Object.fromEntries(
       Object.entries(data).filter(([_, v]) => v !== undefined)
@@ -796,6 +815,8 @@ function Dashboard() {
   };
 
   const handleAddPart = async (projectId: string, processName: string, data: Partial<ProcessPart>) => {
+    const project = projects.find(p => p.id === projectId);
+    if (project?.status === 'completed') return;
     const maxOrder = processParts
       .filter(p => p.projectId === projectId && p.processName === processName)
       .reduce((max, p) => Math.max(max, p.order || 0), 0);
@@ -817,11 +838,15 @@ function Dashboard() {
   };
 
   const handleDeletePart = async (partId: string, projectId: string, processName: string) => {
+    const project = projects.find(p => p.id === projectId);
+    if (project?.status === 'completed') return;
     await deleteDoc(doc(db, 'processParts', partId));
     updateProcessProgress(projectId, processName);
   };
 
   const handleDeleteParts = async (projectId: string, processName: string) => {
+    const project = projects.find(p => p.id === projectId);
+    if (project?.status === 'completed') return;
     // 1. Delete processParts
     const partsQ = query(collection(db, 'processParts'), where('projectId', '==', projectId), where('processName', '==', processName));
     const partsSnapshot = await getDocs(partsQ);
@@ -859,7 +884,6 @@ function Dashboard() {
   };
 
   const handleExportToExcel = (project: Project) => {
-    const projectTasks = tasks.filter(t => t.projectId === project.id);
     const projectParts = processParts.filter(p => p.projectId === project.id);
     
     const wb = XLSX.utils.book_new();
@@ -876,19 +900,41 @@ function Dashboard() {
     const wsInfo = XLSX.utils.aoa_to_sheet(projectInfo);
     XLSX.utils.book_append_sheet(wb, wsInfo, '프로젝트 정보');
 
-    // Parts Sheet
-    const partsData = projectParts.map(p => ({
-      '공정': p.processName,
-      'MOLD': p.moldNo,
-      'DRW NO': p.drwNo,
-      'S': p.s,
-      '부품명': p.partsName,
-      '완료일': p.completedAt ? format(parseISO(p.completedAt), 'yyyy-MM-dd HH:mm') : '미완료',
-      '지연사유': p.delayReason,
-      '지연유형': p.delayType
-    }));
-    const wsParts = XLSX.utils.json_to_sheet(partsData);
-    XLSX.utils.book_append_sheet(wb, wsParts, '공정별 부품 현황');
+    // Export each process to a separate sheet
+    PROCESS_LIST.forEach(procName => {
+      const procParts = projectParts.filter(p => p.processName === procName);
+      if (procParts.length === 0) return;
+
+      const partsData = procParts.sort((a, b) => (a.order || 0) - (b.order || 0)).map(p => {
+        // Calculate delay for export
+        let delayText = '-';
+        if (p.plannedAt) {
+          const plan = new Date(p.plannedAt);
+          const target = p.completedAt ? new Date(p.completedAt) : new Date();
+          plan.setHours(0, 0, 0, 0);
+          target.setHours(0, 0, 0, 0);
+          const diffTime = target.getTime() - plan.getTime();
+          const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+          delayText = diffDays > 0 ? `+${diffDays}` : `${diffDays}`;
+        }
+
+        return {
+          'MOLD': p.moldNo,
+          'DRW NO': p.drwNo,
+          'S': p.s,
+          '부품명': p.partsName,
+          '계획일': p.plannedAt ? format(parseISO(p.plannedAt), 'yyyy-MM-dd') : '-',
+          '완료일': p.completedAt ? format(parseISO(p.completedAt), 'yyyy-MM-dd HH:mm') : '미완료',
+          '지연(일)': delayText,
+          '지연유형': p.delayType || '-',
+          '지연사유': p.delayReason || '-',
+          '작업자': p.initials || '-'
+        };
+      });
+
+      const ws = XLSX.utils.json_to_sheet(partsData);
+      XLSX.utils.book_append_sheet(wb, ws, procName);
+    });
 
     XLSX.writeFile(wb, `${project.model}_생산현황_${format(new Date(), 'yyyyMMdd')}.xlsx`);
   };
@@ -992,14 +1038,14 @@ function Dashboard() {
                       <div className="flex flex-row gap-2">
                         <button 
                           onClick={() => handleMoveProject(project.id, 'up')}
-                          disabled={index === 0}
+                          disabled={index === 0 || project.status === 'completed'}
                           className="p-1.5 bg-slate-800 rounded-lg disabled:opacity-20"
                         >
                           <ChevronRight className="-rotate-90" size={14} />
                         </button>
                         <button 
                           onClick={() => handleMoveProject(project.id, 'down')}
-                          disabled={index === projects.length - 1}
+                          disabled={index === projects.length - 1 || project.status === 'completed'}
                           className="p-1.5 bg-slate-800 rounded-lg disabled:opacity-20"
                         >
                           <ChevronRight className="rotate-90" size={14} />
@@ -1012,24 +1058,33 @@ function Dashboard() {
                           <Save size={14} />
                         </button>
                         {project.status !== 'completed' && (
-                          <button 
-                            onClick={() => handleCompleteProject(project.id)}
-                            className="p-1.5 bg-slate-800 rounded-lg text-blue-500 hover:text-blue-400 transition-colors"
-                            title="생산 완료"
-                          >
-                            <CheckCircle2 size={14} />
-                          </button>
+                          <>
+                            <button 
+                              onClick={() => handleCompleteProject(project.id)}
+                              className="p-1.5 bg-slate-800 rounded-lg text-blue-500 hover:text-blue-400 transition-colors"
+                              title="생산 완료"
+                            >
+                              <CheckCircle2 size={14} />
+                            </button>
+                            <button 
+                              onClick={() => handleDeleteProject(project.id)}
+                              className="p-1.5 bg-slate-800 rounded-lg text-slate-500 hover:text-rose-500 transition-colors"
+                              title="프로젝트 삭제"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </>
                         )}
-                        <button 
-                          onClick={() => handleDeleteProject(project.id)}
-                          className="p-1.5 bg-slate-800 rounded-lg text-slate-500 hover:text-rose-500 transition-colors"
-                          title="프로젝트 삭제"
-                        >
-                          <Trash2 size={14} />
-                        </button>
                       </div>
                       <div>
-                        <h2 className="text-2xl font-black tracking-tight leading-none">{project.name}</h2>
+                        <h2 className="text-2xl font-black tracking-tight leading-none flex items-center gap-2">
+                          {project.name}
+                          {project.status === 'completed' && (
+                            <span className="text-[10px] bg-emerald-500 text-white px-2 py-0.5 rounded-full font-bold animate-pulse">
+                              생산완료 ({project.completedAt ? format(parseISO(project.completedAt), 'yyyy-MM-dd') : ''})
+                            </span>
+                          )}
+                        </h2>
                         <p className="text-slate-400 font-mono text-xs mt-1">{project.model}</p>
                       </div>
                     </div>
@@ -1048,10 +1103,14 @@ function Dashboard() {
                           </div>
                         )}
                         <button 
-                          onClick={() => setSelectedProject(project)}
+                          onClick={() => {
+                            if (project.status !== 'completed') {
+                              setSelectedProject(project);
+                            }
+                          }}
                           className={cn(
-                            "text-[10px] font-bold hover:text-blue-400",
-                            project.foDateHistory && project.foDateHistory.length > 0 ? "text-red-500" : "text-slate-400"
+                            "text-[10px] font-bold",
+                            project.status === 'completed' ? "text-slate-500 cursor-default" : (project.foDateHistory && project.foDateHistory.length > 0 ? "text-red-500 hover:text-red-400" : "text-slate-400 hover:text-blue-400")
                           )}
                         >
                           {project.foDate.split('T')[0]}
@@ -1167,6 +1226,7 @@ function Dashboard() {
             tasks={tasks.filter(t => t.projectId === selectedProcess.projectId && t.processName === selectedProcess.name)}
             processParts={processParts.filter(p => p.projectId === selectedProcess.projectId && p.processName === selectedProcess.name)}
             processes={processes}
+            isReadOnly={projects.find(p => p.id === selectedProcess.projectId)?.status === 'completed'}
             onClose={() => setIsProcessModalOpen(false)}
             onAddTask={handleAddTask}
             onUpdateTaskStatus={handleUpdateTaskStatus}
@@ -1295,7 +1355,7 @@ function Dashboard() {
                     }}
                     className="flex-1 px-4 py-3 bg-rose-600 text-white rounded-xl font-bold hover:bg-rose-700 transition-colors"
                   >
-                    삭제 실행
+                    최종 확인
                   </button>
                 </div>
               </div>
@@ -1383,12 +1443,13 @@ const ProjectModal = ({ project, onClose, onSubmit }: {
 
 import * as Processes from './processes';
 
-const ProcessModal = ({ projectId, processName, tasks, processParts, processes, onClose, onAddTask, onUpdateTaskStatus, onUpdateTask, onAddPart, onDeletePart, onUpdatePart, onBatchUpdateParts, onDeleteParts, onUploadExcel, userInitials, showAlert, showConfirm, showPasswordPrompt }: {
+const ProcessModal = ({ projectId, processName, tasks, processParts, processes, isReadOnly, onClose, onAddTask, onUpdateTaskStatus, onUpdateTask, onAddPart, onDeletePart, onUpdatePart, onBatchUpdateParts, onDeleteParts, onUploadExcel, userInitials, showAlert, showConfirm, showPasswordPrompt }: {
   projectId: string,
   processName: string,
   tasks: Task[],
   processParts: ProcessPart[],
   processes: Process[],
+  isReadOnly?: boolean,
   onClose: () => void,
   onAddTask: (pid: string, pname: string, type: string, desc: string) => void,
   onUpdateTaskStatus: (tid: string, status: TaskStatus, pid: string, pname: string) => void,
@@ -1441,8 +1502,8 @@ const ProcessModal = ({ projectId, processName, tasks, processParts, processes, 
       >
         <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <h3 className="font-bold text-slate-800 text-lg">{processName} 공정 상세</h3>
-            <span className="bg-blue-100 text-blue-600 px-2 py-0.5 rounded text-sm font-bold">{progress}%</span>
+            <h3 className="font-bold text-slate-800 text-xl">{processName} 공정 상세</h3>
+            <span className="bg-blue-100 text-blue-600 px-2 py-0.5 rounded text-base font-bold">{progress}%</span>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-2xl">×</button>
         </div>
@@ -1456,6 +1517,7 @@ const ProcessModal = ({ projectId, processName, tasks, processParts, processes, 
               processParts={processParts}
               headers={headers}
               excelTitle={excelTitle}
+              isReadOnly={isReadOnly}
               onAddTask={onAddTask}
               onUpdateTaskStatus={onUpdateTaskStatus}
               onUpdateTask={onUpdateTask}

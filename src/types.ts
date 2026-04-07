@@ -58,6 +58,7 @@ export interface ProcessPart {
   drwNo: string;
   s: string;
   partsName: string;
+  plannedAt?: string | null;
   completedAt: string | null;
   initials?: string;
   delayReason: string;
