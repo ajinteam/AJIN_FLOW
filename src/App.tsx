@@ -97,7 +97,7 @@ async function testConnection() {
 testConnection();
 
 const PROCESS_COLORS: Record<ProcessName, string> = {
-  '사출': 'bg-blue-50/50',
+  '사출': 'bg-sky-50/50',
   '인쇄': 'bg-indigo-50/50',
   '메탈': 'bg-slate-100/50',
   'PAINT': 'bg-rose-50/50',

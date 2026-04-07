@@ -135,7 +135,7 @@ const ProcessTable = ({
         data: {
           moldNo: p.moldNo || '',
           drwNo: p.drwNo || '',
-          work: p.work || '',
+          s: p.s || '',
           partsName: p.partsName || '',
           plannedAt: p.plannedAt || null,
           completedAt: p.completedAt || null,
@@ -179,7 +179,7 @@ const ProcessTable = ({
   const [newPart, setNewPart] = React.useState({
     moldNo: '',
     drwNo: '',
-    work: '',
+    s: '',
     partsName: '',
     plannedAt: ''
   });
@@ -197,7 +197,7 @@ const ProcessTable = ({
     setNewPart({
       moldNo: '',
       drwNo: '',
-      work: '',
+      s: '',
       partsName: '',
       plannedAt: ''
     });
@@ -262,7 +262,7 @@ const ProcessTable = ({
             <span>데이터 초기화</span>
           </button>
           <span className="text-xs text-slate-400 font-medium italic">
-            * 최종 저장 후 계획날짜 변경 불가
+            * 저장 후 계획날짜 변경 불가, 편집 후 저장하고 나가기 
           </span>
         </div>
         <button 
@@ -271,7 +271,7 @@ const ProcessTable = ({
           className="flex items-center gap-2 bg-blue-600 text-white px-6 py-2 rounded-xl font-black text-sm hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Save size={16} />
-          <span>{isSaving ? '저장 중...' : '최종 저장'}</span>
+          <span>{isSaving ? '저장 중...' : '저장'}</span>
         </button>
       </div>
 
@@ -292,7 +292,7 @@ const ProcessTable = ({
                 <>
                   <th className="border-r border-slate-900 p-1.5 w-[12%] text-center">MOLD</th>
                   <th className="border-r border-slate-900 p-1.5 w-[15%] text-center">DN</th>
-                  <th className="border-r border-slate-900 p-1.5 w-[5%] text-center">WORK</th>
+                  <th className="border-r border-slate-900 p-1.5 w-[5%] text-center">S</th>
                   <th className="border-r border-slate-900 p-1.5 w-[28%] text-center">PART NAME</th>
                 </>
               )}
@@ -329,7 +329,7 @@ const ProcessTable = ({
                               <AutoResizeTextarea 
                                 value={part.moldNo || ''}
                                 onChange={(e) => handleLocalUpdate(part.id, { moldNo: e.target.value })}
-                                className="text-center font-bold focus:bg-blue-50"
+                                className="text-center font-bold focus:bg-sky-100"
                               />
                             </td>
                           );
@@ -344,15 +344,15 @@ const ProcessTable = ({
                               String(part.rawData[i])
                             ) : (
                             <AutoResizeTextarea 
-                              value={i === 1 ? (part.drwNo || '') : i === 2 ? (part.work || '') : i === 3 ? (part.partsName || '') : ''}
+                              value={i === 1 ? (part.drwNo || '') : i === 2 ? (part.s || '') : i === 3 ? (part.partsName || '') : ''}
                               onChange={(e) => {
                                 const val = e.target.value;
                                 if (i === 1) handleLocalUpdate(part.id, { drwNo: val });
-                                else if (i === 2) handleLocalUpdate(part.id, { work: val });
+                                else if (i === 2) handleLocalUpdate(part.id, { s: val });
                                 else if (i === 3) handleLocalUpdate(part.id, { partsName: val });
                               }}
                               disabled={isReadOnly}
-                              className="text-center font-mono focus:bg-blue-50 disabled:cursor-default"
+                              className="text-center font-mono focus:bg-sky-100 disabled:cursor-default"
                             />
                             )}
                           </td>
@@ -369,7 +369,7 @@ const ProcessTable = ({
                               value={part.moldNo || ''}
                               onChange={(e) => handleLocalUpdate(part.id, { moldNo: e.target.value })}
                               disabled={isReadOnly}
-                              className="text-center font-bold focus:bg-blue-50 disabled:cursor-default"
+                              className="text-center font-bold focus:bg-sky-100 disabled:cursor-default"
                             />
                           </td>
                         )}
@@ -382,7 +382,7 @@ const ProcessTable = ({
                             value={part.drwNo || ''}
                             onChange={(e) => handleLocalUpdate(part.id, { drwNo: e.target.value })}
                             disabled={isReadOnly}
-                            className="text-center font-mono focus:bg-blue-50 disabled:cursor-default"
+                            className="text-center font-mono focus:bg-sky-100 disabled:cursor-default"
                           />
                         </td>
                         <td className={cn(
@@ -391,10 +391,10 @@ const ProcessTable = ({
                           pIdx === group.parts.length - 1 ? "border-b-2 border-b-slate-900" : "border-b-0"
                         )}>
                           <AutoResizeTextarea 
-                            value={part.work || ''}
-                            onChange={(e) => handleLocalUpdate(part.id, { work: e.target.value })}
+                            value={part.s || ''}
+                            onChange={(e) => handleLocalUpdate(part.id, { s: e.target.value })}
                             disabled={isReadOnly}
-                            className="text-center font-bold focus:bg-blue-50 disabled:cursor-default"
+                            className="text-center font-bold focus:bg-sky-100 disabled:cursor-default"
                           />
                         </td>
                         <td className={cn(
@@ -406,7 +406,7 @@ const ProcessTable = ({
                             value={part.partsName || ''}
                             onChange={(e) => handleLocalUpdate(part.id, { partsName: e.target.value })}
                             disabled={isReadOnly}
-                            className="text-left font-medium focus:bg-blue-50 disabled:cursor-default"
+                            className="text-left font-medium focus:bg-sky-100 disabled:cursor-default"
                           />
                         </td>
                       </>
@@ -424,7 +424,7 @@ const ProcessTable = ({
                             onChange={(e) => handleUpdateGroupLocal(group.parts, { plannedAt: e.target.value ? new Date(e.target.value).toISOString() : null })}
                             disabled={isReadOnly || !!parts.find(p => p.id === part.id)?.plannedAt}
                             className={cn(
-                              "w-full bg-transparent border-none text-center font-bold outline-none focus:bg-blue-50 text-xs",
+                              "w-full bg-transparent border-none text-center font-bold outline-none focus:bg-sky-100 text-xs",
                               (isReadOnly || parts.find(p => p.id === part.id)?.plannedAt) && "opacity-50 cursor-not-allowed"
                             )}
                           />
@@ -438,7 +438,7 @@ const ProcessTable = ({
                               "cursor-pointer p-1 rounded-md transition-all min-h-[36px] flex items-center justify-center border border-dashed mx-auto w-full max-w-[100px]",
                               group.parts.every(p => p.completedAt) 
                                 ? "bg-emerald-50 border-emerald-400 text-emerald-800" 
-                                : "bg-slate-50 border-slate-200 text-slate-300 hover:border-blue-400 hover:bg-blue-50"
+                                : "bg-slate-50 border-slate-200 text-slate-300 hover:border-sky-400 hover:bg-sky-50"
                             )}
                             onClick={() => handleToggleCompleteGroup(group.parts)}
                           >
@@ -474,7 +474,7 @@ const ProcessTable = ({
                               value={group.parts[0].delayType}
                               onChange={(e) => handleUpdateGroupLocal(group.parts, { delayType: e.target.value })}
                               disabled={isReadOnly}
-                              className="w-full p-1 border border-slate-300 rounded text-xs font-bold bg-slate-50 outline-none focus:ring-1 focus:ring-blue-500 disabled:cursor-default"
+                              className="w-full p-1 border border-slate-300 rounded text-xs font-bold bg-slate-50 outline-none focus:ring-1 focus:ring-sky-400 disabled:cursor-default"
                             >
                               <option value="">사유 선택</option>
                               {DELAY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
@@ -484,7 +484,7 @@ const ProcessTable = ({
                               onChange={(e) => handleUpdateGroupLocal(group.parts, { delayReason: e.target.value })}
                               disabled={isReadOnly}
                               placeholder="상세 사유 입력"
-                              className="p-1 border border-slate-300 rounded text-xs bg-slate-50 focus:ring-1 focus:ring-blue-500 disabled:cursor-default"
+                              className="p-1 border border-slate-300 rounded text-xs bg-slate-50 focus:ring-1 focus:ring-sky-400 disabled:cursor-default"
                             />
                           </div>
                         </td>
@@ -506,21 +506,21 @@ const ProcessTable = ({
               </React.Fragment>
             ))}
             {/* New Row Input Area */}
-            <tr className="bg-blue-50/50 border-t-2 border-t-slate-900 h-12">
+            <tr className="bg-sky-50/50 border-t-2 border-t-slate-900 h-12">
               {headers && headers.length > 0 ? (
                 headers.map((_, i) => (
                   <td key={i} className="border-r border-slate-900 p-1.5">
                     <AutoResizeTextarea 
                       placeholder={headers[i]}
-                      value={i === 0 ? newPart.moldNo : i === 1 ? newPart.drwNo : i === 2 ? newPart.work : i === 3 ? newPart.partsName : ''}
+                      value={i === 0 ? newPart.moldNo : i === 1 ? newPart.drwNo : i === 2 ? newPart.s : i === 3 ? newPart.partsName : ''}
                       onChange={(e) => {
                         const val = e.target.value;
                         if (i === 0) setNewPart(prev => ({ ...prev, moldNo: val }));
                         else if (i === 1) setNewPart(prev => ({ ...prev, drwNo: val }));
-                        else if (i === 2) setNewPart(prev => ({ ...prev, work: val }));
+                        else if (i === 2) setNewPart(prev => ({ ...prev, s: val }));
                         else if (i === 3) setNewPart(prev => ({ ...prev, partsName: val }));
                       }}
-                      className="bg-white/80 border border-blue-200 rounded px-2 py-1 text-center font-bold focus:ring-2 focus:ring-blue-400"
+                      className="bg-white/80 border border-sky-200 rounded px-2 py-1 text-center font-bold focus:ring-2 focus:ring-sky-400"
                     />
                   </td>
                 ))
@@ -531,7 +531,7 @@ const ProcessTable = ({
                       placeholder="MOLD"
                       value={newPart.moldNo}
                       onChange={(e) => setNewPart(prev => ({ ...prev, moldNo: e.target.value }))}
-                      className="bg-white/80 border border-blue-200 rounded px-2 py-1 text-center font-bold focus:ring-2 focus:ring-blue-400"
+                      className="bg-white/80 border border-sky-200 rounded px-2 py-1 text-center font-bold focus:ring-2 focus:ring-sky-400"
                     />
                   </td>
                   <td className="border-r border-slate-900 p-1.5">
@@ -539,15 +539,15 @@ const ProcessTable = ({
                       placeholder="DN"
                       value={newPart.drwNo}
                       onChange={(e) => setNewPart(prev => ({ ...prev, drwNo: e.target.value }))}
-                      className="bg-white/80 border border-blue-200 rounded px-2 py-1 text-center font-mono focus:ring-2 focus:ring-blue-400"
+                      className="bg-white/80 border border-sky-200 rounded px-2 py-1 text-center font-mono focus:ring-2 focus:ring-sky-400"
                     />
                   </td>
                   <td className="border-r border-slate-900 p-1.5">
                     <AutoResizeTextarea 
-                      placeholder="WORK"
-                      value={newPart.work}
-                      onChange={(e) => setNewPart(prev => ({ ...prev, work: e.target.value }))}
-                      className="bg-white/80 border border-blue-200 rounded px-2 py-1 text-center font-bold focus:ring-2 focus:ring-blue-400"
+                      placeholder="S"
+                      value={newPart.s}
+                      onChange={(e) => setNewPart(prev => ({ ...prev, s: e.target.value }))}
+                      className="bg-white/80 border border-sky-200 rounded px-2 py-1 text-center font-bold focus:ring-2 focus:ring-sky-400"
                     />
                   </td>
                   <td className="border-r border-slate-900 p-1.5">
@@ -555,7 +555,7 @@ const ProcessTable = ({
                       placeholder="PART NAME"
                       value={newPart.partsName}
                       onChange={(e) => setNewPart(prev => ({ ...prev, partsName: e.target.value }))}
-                      className="bg-white/80 border border-blue-200 rounded px-2 py-1 text-left font-medium focus:ring-2 focus:ring-blue-400"
+                      className="bg-white/80 border border-sky-200 rounded px-2 py-1 text-left font-medium focus:ring-2 focus:ring-sky-400"
                     />
                   </td>
                 </>
@@ -565,7 +565,7 @@ const ProcessTable = ({
                   type="date"
                   value={newPart.plannedAt}
                   onChange={(e) => setNewPart(prev => ({ ...prev, plannedAt: e.target.value }))}
-                  className="w-full bg-white/80 border border-blue-200 rounded px-2 py-1 text-center font-bold outline-none focus:ring-2 focus:ring-blue-400 text-[9px]"
+                  className="w-full bg-white/80 border border-sky-200 rounded px-2 py-1 text-center font-bold outline-none focus:ring-2 focus:ring-sky-400 text-[9px]"
                 />
               </td>
               <td className="border-r border-slate-900 p-1.5 text-center text-slate-400 italic">자동 생성</td>
@@ -678,7 +678,7 @@ const ProcessBase = ({ name, projectId, processParts, headers, excelTitle, isRea
   );
 };
 
-export const Injection = (props: ProcessProps) => <ProcessBase name="사출" colorClass="bg-blue-50/50" {...props} />;
+export const Injection = (props: ProcessProps) => <ProcessBase name="사출" colorClass="bg-sky-50/50" {...props} />;
 export const Printing = (props: ProcessProps) => <ProcessBase name="인쇄" colorClass="bg-indigo-50/50" {...props} />;
 export const Metal = (props: ProcessProps) => <ProcessBase name="메탈" colorClass="bg-slate-100/50" {...props} />;
 export const Paint = (props: ProcessProps) => <ProcessBase name="PAINT" colorClass="bg-rose-50/50" {...props} />;
