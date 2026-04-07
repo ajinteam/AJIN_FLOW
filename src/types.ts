@@ -19,6 +19,7 @@ export interface Project {
   model: string;
   targetQuantity: number;
   foDate: string; // ISO string
+  foDateHistory?: string[]; // History of FO dates
   createdAt: string;
   sortOrder: number;
   status?: 'active' | 'completed';
@@ -30,6 +31,7 @@ export interface Process {
   projectId: string;
   name: string;
   targetDate: string; // ISO string
+  targetDateHistory?: string[]; // History of target dates
   progress: number; // 0-100
   headers?: string[]; // Dynamic Excel headers
   excelTitle?: string | null; // Title from Excel file
@@ -44,6 +46,8 @@ export interface Task {
   status: TaskStatus;
   completedAt?: string;
   initials?: string;
+  delayReason?: string;
+  delayType?: string;
 }
 
 export interface ProcessPart {

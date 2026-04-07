@@ -521,6 +521,11 @@ function Dashboard() {
   };
 
   const handleUpdateProject = async (id: string, data: Partial<Project>) => {
+    const project = projects.find(p => p.id === id);
+    if (project && data.foDate && project.foDate.split('T')[0] !== data.foDate.split('T')[0]) {
+      const history = project.foDateHistory || [];
+      data.foDateHistory = [...history, project.foDate];
+    }
     await updateDoc(doc(db, 'projects', id), data);
     setSelectedProject(null);
   };
@@ -585,7 +590,17 @@ function Dashboard() {
   };
 
   const handleUpdateProcessDate = async (processId: string, date: string) => {
-    await updateDoc(doc(db, 'processes', processId), { targetDate: date });
+    const proc = processes.find(p => p.id === processId);
+    if (!proc) return;
+    
+    const history = proc.targetDateHistory || [];
+    if (proc.targetDate.split('T')[0] !== date.split('T')[0]) {
+      const newHistory = [...history, proc.targetDate];
+      await updateDoc(doc(db, 'processes', processId), { 
+        targetDate: date,
+        targetDateHistory: newHistory
+      });
+    }
   };
 
   const handleAddTask = async (projectId: string, processName: string, type: string, description: string) => {
@@ -610,6 +625,14 @@ function Dashboard() {
     }
     const sanitizedData = Object.fromEntries(
       Object.entries(updateData).filter(([_, v]) => v !== undefined)
+    );
+    await updateDoc(doc(db, 'tasks', taskId), sanitizedData);
+    updateProcessProgress(projectId, processName);
+  };
+
+  const handleUpdateTask = async (taskId: string, data: Partial<Task>, projectId: string, processName: string) => {
+    const sanitizedData = Object.fromEntries(
+      Object.entries(data).filter(([_, v]) => v !== undefined)
     );
     await updateDoc(doc(db, 'tasks', taskId), sanitizedData);
     updateProcessProgress(projectId, processName);
@@ -712,7 +735,7 @@ function Dashboard() {
         const moldIdx = findRawIdx(['MOLD', '공정', 'NO','TYPE']);
         const drwIdx = findRawIdx(['도번', 'DWG', 'DRAWING']);
         const nameIdx = findRawIdx(['품명', '부품', 'PART', 'NAME']);
-        const sIdx = rawHeaders.findIndex(h => String(h).toUpperCase().trim() === 'S');
+        const sIdx = findRawIdx(['S', '작업', '상태']);
 
         // Use writeBatch for efficiency
         const BATCH_SIZE = 400;
@@ -772,12 +795,57 @@ function Dashboard() {
     updateProcessProgress(projectId, processName);
   };
 
-  const handleDeleteParts = async (projectId: string, processName: string) => {
-    const q = query(collection(db, 'processParts'), where('projectId', '==', projectId), where('processName', '==', processName));
-    const snapshot = await getDocs(q);
-    const deletePromises = snapshot.docs.map(docSnap => deleteDoc(doc(db, 'processParts', docSnap.id)));
-    await Promise.all(deletePromises);
+  const handleAddPart = async (projectId: string, processName: string, data: Partial<ProcessPart>) => {
+    const maxOrder = processParts
+      .filter(p => p.projectId === projectId && p.processName === processName)
+      .reduce((max, p) => Math.max(max, p.order || 0), 0);
+
+    await addDoc(collection(db, 'processParts'), {
+      projectId,
+      processName,
+      moldNo: data.moldNo || '',
+      drwNo: data.drwNo || '',
+      s: data.s || '',
+      partsName: data.partsName || '',
+      completedAt: null,
+      delayReason: '',
+      delayType: '',
+      order: maxOrder + 1,
+      ...data
+    });
     updateProcessProgress(projectId, processName);
+  };
+
+  const handleDeletePart = async (partId: string, projectId: string, processName: string) => {
+    await deleteDoc(doc(db, 'processParts', partId));
+    updateProcessProgress(projectId, processName);
+  };
+
+  const handleDeleteParts = async (projectId: string, processName: string) => {
+    // 1. Delete processParts
+    const partsQ = query(collection(db, 'processParts'), where('projectId', '==', projectId), where('processName', '==', processName));
+    const partsSnapshot = await getDocs(partsQ);
+    const partsDeletePromises = partsSnapshot.docs.map(docSnap => deleteDoc(doc(db, 'processParts', docSnap.id)));
+    
+    // 2. Delete tasks
+    const tasksQ = query(collection(db, 'tasks'), where('projectId', '==', projectId), where('processName', '==', processName));
+    const tasksSnapshot = await getDocs(tasksQ);
+    const tasksDeletePromises = tasksSnapshot.docs.map(docSnap => deleteDoc(doc(db, 'tasks', docSnap.id)));
+    
+    await Promise.all([...partsDeletePromises, ...tasksDeletePromises]);
+    
+    // 3. Reset process data (progress, headers, excelTitle, targetDate, targetDateHistory)
+    const procQuery = query(collection(db, 'processes'), where('projectId', '==', projectId), where('name', '==', processName));
+    const procSnapshot = await getDocs(procQuery);
+    if (!procSnapshot.empty) {
+      await updateDoc(doc(db, 'processes', procSnapshot.docs[0].id), { 
+        progress: 0,
+        headers: [],
+        excelTitle: null,
+        targetDate: '',
+        targetDateHistory: []
+      });
+    }
   };
 
   const handleCompleteProject = async (projectId: string) => {
@@ -830,26 +898,16 @@ function Dashboard() {
     const partsSnapshot = await getDocs(partsQ);
     const parts = partsSnapshot.docs.map(doc => doc.data() as ProcessPart);
     
-    if (parts.length > 0) {
-      const completedCount = parts.filter(p => p.completedAt).length;
-      const progress = Math.round((completedCount / parts.length) * 100);
-      
-      const procQuery = query(collection(db, 'processes'), where('projectId', '==', projectId), where('name', '==', processName));
-      const procSnapshot = await getDocs(procQuery);
-      if (!procSnapshot.empty) {
-        await updateDoc(doc(db, 'processes', procSnapshot.docs[0].id), { progress });
-      }
-      return;
-    }
-
     const tasksQ = query(collection(db, 'tasks'), where('projectId', '==', projectId), where('processName', '==', processName));
     const tasksSnapshot = await getDocs(tasksQ);
     const tasks = tasksSnapshot.docs.map(doc => doc.data() as Task);
     
-    if (tasks.length === 0) return;
+    const totalItems = parts.length + tasks.length;
+    if (totalItems === 0) return;
 
-    const completed = tasks.filter(t => t.status === 'completed').length;
-    const progress = Math.round((completed / tasks.length) * 100);
+    const completedParts = parts.filter(p => p.completedAt).length;
+    const completedTasks = tasks.filter(t => t.status === 'completed').length;
+    const progress = Math.round(((completedParts + completedTasks) / totalItems) * 100);
 
     const procQuery = query(collection(db, 'processes'), where('projectId', '==', projectId), where('name', '==', processName));
     const procSnapshot = await getDocs(procQuery);
@@ -979,12 +1037,26 @@ function Dashboard() {
                       <p className={cn("text-2xl font-black leading-none", foDDay < 0 ? "text-rose-500" : "text-blue-400")}>
                         {foDDay === 0 ? 'D-DAY' : foDDay > 0 ? `D-${foDDay}` : `D+${Math.abs(foDDay)}`}
                       </p>
-                      <button 
-                        onClick={() => setSelectedProject(project)}
-                        className="text-xs font-bold text-slate-400 hover:text-blue-400 mt-1"
-                      >
-                        {format(parseISO(project.foDate), 'MM-dd')}
-                      </button>
+                      <div className="flex items-center justify-end gap-1 mt-1">
+                        {project.foDateHistory && project.foDateHistory.length > 0 && (
+                          <div className="flex gap-1">
+                            {project.foDateHistory.map((h, idx) => (
+                              <span key={idx} className="text-[10px] font-bold text-slate-400">
+                                {h.split('T')[0]}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        <button 
+                          onClick={() => setSelectedProject(project)}
+                          className={cn(
+                            "text-[10px] font-bold hover:text-blue-400",
+                            project.foDateHistory && project.foDateHistory.length > 0 ? "text-red-500" : "text-slate-400"
+                          )}
+                        >
+                          {project.foDate.split('T')[0]}
+                        </button>
+                      </div>
                     </div>
                   </div>
                   
@@ -1006,7 +1078,7 @@ function Dashboard() {
                 <div className="grid grid-cols-4 border-t border-slate-100">
                   {PROCESS_LIST.map(name => {
                     const proc = projectProcesses.find(p => p.name === name);
-                    const dDay = proc ? differenceInDays(parseISO(proc.targetDate), today) : 0;
+                    const dDay = (proc && proc.targetDate) ? differenceInDays(parseISO(proc.targetDate), today) : 0;
                     return (
                       <div 
                         key={name} 
@@ -1035,15 +1107,29 @@ function Dashboard() {
                           {proc?.progress || 0}<span className="text-xs font-bold text-slate-400 ml-0.5">%</span>
                         </div>
 
-                        <div className="w-full mt-2">
-                          <input 
-                            type="date" 
-                            value={proc?.targetDate.split('T')[0] || ''}
-                            onChange={(e) => proc && handleUpdateProcessDate(proc.id, new Date(e.target.value).toISOString())}
-                            className="text-[10px] font-black font-mono text-slate-500 bg-transparent border-none p-0 focus:ring-0 cursor-pointer text-center w-full"
-                          />
-                          <div className={cn("text-xs font-black text-center mt-0.5", dDay < 0 ? "text-rose-500" : dDay === 0 ? "text-blue-600" : "text-slate-500")}>
-                            {dDay === 0 ? 'D-0' : dDay > 0 ? `-${dDay}` : `+${Math.abs(dDay)}`}
+                        <div className="w-full mt-2 flex items-center justify-center gap-1">
+                          {proc?.targetDateHistory && proc.targetDateHistory.length > 0 && (
+                            <div className="flex flex-col items-end">
+                              {proc.targetDateHistory.map((h, idx) => (
+                                <div key={idx} className="text-[8px] font-black font-mono text-black leading-none">
+                                  {h.split('T')[0]}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          <div className="flex flex-col items-center">
+                            <input 
+                              type="date" 
+                              value={proc?.targetDate.split('T')[0] || ''}
+                              onChange={(e) => proc && handleUpdateProcessDate(proc.id, new Date(e.target.value).toISOString())}
+                              className={cn(
+                                "text-[10px] font-black font-mono bg-transparent border-none p-0 focus:ring-0 cursor-pointer text-center w-full",
+                                proc?.targetDateHistory && proc.targetDateHistory.length > 0 ? "text-red-600" : "text-slate-500"
+                              )}
+                            />
+                            <div className={cn("text-xs font-black text-center mt-0.5", dDay < 0 ? "text-rose-500" : dDay === 0 ? "text-blue-600" : "text-slate-500")}>
+                              {dDay === 0 ? 'D-0' : dDay > 0 ? `-${dDay}` : `+${Math.abs(dDay)}`}
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -1084,6 +1170,9 @@ function Dashboard() {
             onClose={() => setIsProcessModalOpen(false)}
             onAddTask={handleAddTask}
             onUpdateTaskStatus={handleUpdateTaskStatus}
+            onUpdateTask={handleUpdateTask}
+            onAddPart={handleAddPart}
+            onDeletePart={handleDeletePart}
             onUpdatePart={handleUpdatePart}
             onBatchUpdateParts={handleBatchUpdateParts}
             onDeleteParts={handleDeleteParts}
@@ -1294,7 +1383,7 @@ const ProjectModal = ({ project, onClose, onSubmit }: {
 
 import * as Processes from './processes';
 
-const ProcessModal = ({ projectId, processName, tasks, processParts, processes, onClose, onAddTask, onUpdateTaskStatus, onUpdatePart, onBatchUpdateParts, onDeleteParts, onUploadExcel, userInitials, showAlert, showConfirm, showPasswordPrompt }: {
+const ProcessModal = ({ projectId, processName, tasks, processParts, processes, onClose, onAddTask, onUpdateTaskStatus, onUpdateTask, onAddPart, onDeletePart, onUpdatePart, onBatchUpdateParts, onDeleteParts, onUploadExcel, userInitials, showAlert, showConfirm, showPasswordPrompt }: {
   projectId: string,
   processName: string,
   tasks: Task[],
@@ -1303,6 +1392,9 @@ const ProcessModal = ({ projectId, processName, tasks, processParts, processes, 
   onClose: () => void,
   onAddTask: (pid: string, pname: string, type: string, desc: string) => void,
   onUpdateTaskStatus: (tid: string, status: TaskStatus, pid: string, pname: string) => void,
+  onUpdateTask: (tid: string, data: Partial<Task>, pid: string, pname: string) => void,
+  onAddPart: (projectId: string, processName: string, data: Partial<ProcessPart>) => void,
+  onDeletePart: (partId: string, projectId: string, processName: string) => void,
   onUpdatePart: (partId: string, data: Partial<ProcessPart>, projectId: string, processName: string) => void,
   onBatchUpdateParts: (updates: { id: string, data: Partial<ProcessPart> }[], projectId: string, processName: string) => void,
   onDeleteParts: (projectId: string, processName: string) => void,
@@ -1313,12 +1405,11 @@ const ProcessModal = ({ projectId, processName, tasks, processParts, processes, 
   showPasswordPrompt: (title: string, message: string, onConfirm: (password: string) => void) => void
 }) => {
   const progress = (() => {
-    if (processParts.length > 0) {
-      const completedCount = processParts.filter(p => p.completedAt).length;
-      return Math.round((completedCount / processParts.length) * 100);
-    }
-    const completedCount = tasks.filter(t => t.status === 'completed').length;
-    return tasks.length > 0 ? Math.round((completedCount / tasks.length) * 100) : 0;
+    const totalItems = processParts.length + tasks.length;
+    if (totalItems === 0) return 0;
+    const completedParts = processParts.filter(p => p.completedAt).length;
+    const completedTasks = tasks.filter(t => t.status === 'completed').length;
+    return Math.round(((completedParts + completedTasks) / totalItems) * 100);
   })();
 
   // Map process name to component
@@ -1367,6 +1458,9 @@ const ProcessModal = ({ projectId, processName, tasks, processParts, processes, 
               excelTitle={excelTitle}
               onAddTask={onAddTask}
               onUpdateTaskStatus={onUpdateTaskStatus}
+              onUpdateTask={onUpdateTask}
+              onAddPart={onAddPart}
+              onDeletePart={onDeletePart}
               onUpdatePart={onUpdatePart}
               onBatchUpdateParts={onBatchUpdateParts}
               onDeleteParts={onDeleteParts}

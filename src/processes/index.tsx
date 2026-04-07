@@ -17,6 +17,9 @@ interface ProcessProps {
   excelTitle?: string | null;
   onAddTask: (pid: string, pname: string, type: string, desc: string) => void;
   onUpdateTaskStatus: (tid: string, status: TaskStatus, pid: string, pname: string) => void;
+  onUpdateTask: (tid: string, data: Partial<Task>, pid: string, pname: string) => void;
+  onAddPart: (projectId: string, processName: string, data: Partial<ProcessPart>) => void;
+  onDeletePart: (partId: string, projectId: string, processName: string) => void;
   onUpdatePart: (partId: string, data: Partial<ProcessPart>, projectId: string, processName: string) => void;
   onBatchUpdateParts: (updates: { id: string, data: Partial<ProcessPart> }[], projectId: string, processName: string) => void;
   onDeleteParts: (projectId: string, processName: string) => void;
@@ -34,6 +37,8 @@ const ProcessTable = ({
   headers,
   excelTitle,
   userInitials,
+  onAddPart,
+  onDeletePart,
   onBatchUpdateParts, 
   onDeleteParts, 
   showAlert, 
@@ -46,6 +51,8 @@ const ProcessTable = ({
   headers?: string[];
   excelTitle?: string | null;
   userInitials: string;
+  onAddPart: (projectId: string, processName: string, data: Partial<ProcessPart>) => void;
+  onDeletePart: (partId: string, projectId: string, processName: string) => void;
   onBatchUpdateParts: (updates: { id: string, data: Partial<ProcessPart> }[], projectId: string, processName: string) => void;
   onDeleteParts: (projectId: string, processName: string) => void;
   showAlert: (title: string, message: string, type?: 'info' | 'error' | 'success') => void;
@@ -91,6 +98,10 @@ const ProcessTable = ({
       const updates = localParts.map(p => ({
         id: p.id,
         data: {
+          moldNo: p.moldNo || '',
+          drwNo: p.drwNo || '',
+          s: p.s || '',
+          partsName: p.partsName || '',
           completedAt: p.completedAt || null,
           initials: p.initials || null,
           delayReason: p.delayReason || '',
@@ -128,6 +139,37 @@ const ProcessTable = ({
     });
   };
 
+  const [newPart, setNewPart] = React.useState({
+    moldNo: '',
+    drwNo: '',
+    s: '',
+    partsName: ''
+  });
+
+  const handleAddRow = () => {
+    if (!newPart.moldNo && !newPart.drwNo && !newPart.partsName) {
+      showAlert('입력 오류', '최소한 하나의 필드는 입력해야 합니다.', 'error');
+      return;
+    }
+    onAddPart(projectId, processName, newPart);
+    setNewPart({
+      moldNo: '',
+      drwNo: '',
+      s: '',
+      partsName: ''
+    });
+  };
+
+  const handleDeleteRow = (partId: string) => {
+    showConfirm('행 삭제', '이 행을 삭제하시겠습니까?', () => {
+      onDeletePart(partId, projectId, processName);
+    });
+  };
+
+  const handleLocalUpdate = (id: string, data: Partial<ProcessPart>) => {
+    setLocalParts(prev => prev.map(p => p.id === id ? { ...p, ...data } : p));
+  };
+
   const groups = React.useMemo(() => {
     const result: { moldNo: string; parts: ProcessPart[] }[] = [];
     let currentGroup: { moldNo: string; parts: ProcessPart[] } | null = null;
@@ -148,13 +190,15 @@ const ProcessTable = ({
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
-        <button 
-          onClick={handleDeleteAll}
-          className="flex items-center gap-1.5 text-rose-500 text-xs font-bold hover:bg-rose-50 px-3 py-1.5 rounded-lg transition-colors border border-rose-100"
-        >
-          <Trash2 size={14} />
-          <span>데이터 초기화</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={handleDeleteAll}
+            className="flex items-center gap-1.5 text-rose-500 text-xs font-bold hover:bg-rose-50 px-3 py-1.5 rounded-lg transition-colors border border-rose-100"
+          >
+            <Trash2 size={14} />
+            <span>데이터 초기화</span>
+          </button>
+        </div>
         <button 
           onClick={handleSave}
           disabled={isSaving}
@@ -186,8 +230,9 @@ const ProcessTable = ({
                   <th className="border-r border-slate-900 p-1.5 w-[28%] text-center">PART NAME</th>
                 </>
               )}
-              <th className="border-r border-slate-900 p-1.5 w-[15%] text-center">완료</th>
-              <th className="p-1.5 w-[25%] text-center">DELAY 사유</th>
+              <th className="border-r border-slate-900 p-1.5 w-[12%] text-center">완료</th>
+              <th className="border-r border-slate-900 p-1.5 w-[20%] text-center">DELAY 사유</th>
+              <th className="p-1.5 w-[5%] text-center">삭제</th>
             </tr>
           </thead>
           <tbody>
@@ -213,7 +258,12 @@ const ProcessTable = ({
                                 "border-r border-slate-900 p-1.5 text-center font-bold bg-white align-middle text-slate-900 border-t-2 border-t-slate-900 border-b-2 border-b-slate-900",
                               )}
                             >
-                              {part.rawData && part.rawData[i] !== undefined && part.rawData[i] !== null ? String(part.rawData[i]) : ''}
+                              <input 
+                                type="text"
+                                value={part.moldNo || ''}
+                                onChange={(e) => handleLocalUpdate(part.id, { moldNo: e.target.value })}
+                                className="w-full bg-transparent border-none text-center font-bold outline-none focus:bg-blue-50"
+                              />
                             </td>
                           );
                         }
@@ -223,7 +273,21 @@ const ProcessTable = ({
                             pIdx === 0 && "border-t-2 border-t-slate-900",
                             pIdx === group.parts.length - 1 ? "border-b-2 border-b-slate-900" : "border-b-0"
                           )}>
-                            {part.rawData && part.rawData[i] !== undefined && part.rawData[i] !== null ? String(part.rawData[i]) : ''}
+                            {part.rawData && part.rawData[i] !== undefined && part.rawData[i] !== null ? (
+                              String(part.rawData[i])
+                            ) : (
+                              <input 
+                                type="text"
+                                value={i === 1 ? (part.drwNo || '') : i === 2 ? (part.s || '') : i === 3 ? (part.partsName || '') : ''}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  if (i === 1) handleLocalUpdate(part.id, { drwNo: val });
+                                  else if (i === 2) handleLocalUpdate(part.id, { s: val });
+                                  else if (i === 3) handleLocalUpdate(part.id, { partsName: val });
+                                }}
+                                className="w-full bg-transparent border-none text-center font-mono outline-none focus:bg-blue-50"
+                              />
+                            )}
                           </td>
                         );
                       })
@@ -234,24 +298,50 @@ const ProcessTable = ({
                             rowSpan={group.parts.length} 
                             className="border-r border-slate-900 border-t-2 border-t-slate-900 border-b-2 border-b-slate-900 p-1.5 text-center font-bold bg-white align-middle text-slate-900"
                           >
-                            {group.moldNo}
+                            <input 
+                              type="text"
+                              value={part.moldNo || ''}
+                              onChange={(e) => handleLocalUpdate(part.id, { moldNo: e.target.value })}
+                              className="w-full bg-transparent border-none text-center font-bold outline-none focus:bg-blue-50"
+                            />
                           </td>
                         )}
                         <td className={cn(
                           "border-r border-slate-900 p-1.5 text-center font-mono text-slate-700 whitespace-nowrap overflow-hidden text-ellipsis",
                           pIdx === 0 && "border-t-2 border-t-slate-900",
                           pIdx === group.parts.length - 1 ? "border-b-2 border-b-slate-900" : "border-b-0"
-                        )}>{part.drwNo}</td>
+                        )}>
+                          <input 
+                            type="text"
+                            value={part.drwNo || ''}
+                            onChange={(e) => handleLocalUpdate(part.id, { drwNo: e.target.value })}
+                            className="w-full bg-transparent border-none text-center font-mono outline-none focus:bg-blue-50"
+                          />
+                        </td>
                         <td className={cn(
                           "border-r border-slate-900 p-1.5 text-center font-bold text-slate-500",
                           pIdx === 0 && "border-t-2 border-t-slate-900",
                           pIdx === group.parts.length - 1 ? "border-b-2 border-b-slate-900" : "border-b-0"
-                        )}>{part.s}</td>
+                        )}>
+                          <input 
+                            type="text"
+                            value={part.s || ''}
+                            onChange={(e) => handleLocalUpdate(part.id, { s: e.target.value })}
+                            className="w-full bg-transparent border-none text-center font-bold outline-none focus:bg-blue-50"
+                          />
+                        </td>
                         <td className={cn(
                           "border-r border-slate-900 p-1.5 font-medium text-slate-800 px-2 text-left whitespace-nowrap overflow-hidden text-ellipsis",
                           pIdx === 0 && "border-t-2 border-t-slate-900",
                           pIdx === group.parts.length - 1 ? "border-b-2 border-b-slate-900" : "border-b-0"
-                        )}>{part.partsName}</td>
+                        )}>
+                          <input 
+                            type="text"
+                            value={part.partsName || ''}
+                            onChange={(e) => handleLocalUpdate(part.id, { partsName: e.target.value })}
+                            className="w-full bg-transparent border-none text-left font-medium outline-none focus:bg-blue-50"
+                          />
+                        </td>
                       </>
                     )}
                     
@@ -286,7 +376,7 @@ const ProcessTable = ({
                         </td>
                         <td 
                           rowSpan={group.parts.length} 
-                          className="p-1.5 align-middle bg-white text-left border-t-2 border-t-slate-900 border-b-2 border-b-slate-900"
+                          className="border-r border-slate-900 p-1.5 align-middle bg-white text-left border-t-2 border-t-slate-900 border-b-2 border-b-slate-900"
                         >
                           <div className="flex flex-col gap-1 max-w-[180px] mx-auto">
                             <select 
@@ -306,15 +396,94 @@ const ProcessTable = ({
                             />
                           </div>
                         </td>
+                        <td 
+                          rowSpan={group.parts.length}
+                          className="p-1.5 text-center align-middle bg-white border-t-2 border-t-slate-900 border-b-2 border-b-slate-900"
+                        >
+                          <button 
+                            onClick={() => handleDeleteRow(part.id)}
+                            className="text-rose-400 hover:text-rose-600 transition-colors"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </td>
                       </>
                     )}
                   </tr>
                 ))}
               </React.Fragment>
             ))}
+            {/* New Row Input Area */}
+            <tr className="bg-blue-50/50 border-t-2 border-t-slate-900 h-12">
+              {headers && headers.length > 0 ? (
+                headers.map((_, i) => (
+                  <td key={i} className="border-r border-slate-900 p-1.5">
+                    <input 
+                      type="text"
+                      placeholder={headers[i]}
+                      value={i === 0 ? newPart.moldNo : i === 1 ? newPart.drwNo : i === 2 ? newPart.s : i === 3 ? newPart.partsName : ''}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (i === 0) setNewPart(prev => ({ ...prev, moldNo: val }));
+                        else if (i === 1) setNewPart(prev => ({ ...prev, drwNo: val }));
+                        else if (i === 2) setNewPart(prev => ({ ...prev, s: val }));
+                        else if (i === 3) setNewPart(prev => ({ ...prev, partsName: val }));
+                      }}
+                      className="w-full bg-white/80 border border-blue-200 rounded px-2 py-1 text-center font-bold outline-none focus:ring-2 focus:ring-blue-400"
+                    />
+                  </td>
+                ))
+              ) : (
+                <>
+                  <td className="border-r border-slate-900 p-1.5">
+                    <input 
+                      type="text"
+                      placeholder="MOLD"
+                      value={newPart.moldNo}
+                      onChange={(e) => setNewPart(prev => ({ ...prev, moldNo: e.target.value }))}
+                      className="w-full bg-white/80 border border-blue-200 rounded px-2 py-1 text-center font-bold outline-none focus:ring-2 focus:ring-blue-400"
+                    />
+                  </td>
+                  <td className="border-r border-slate-900 p-1.5">
+                    <input 
+                      type="text"
+                      placeholder="DN"
+                      value={newPart.drwNo}
+                      onChange={(e) => setNewPart(prev => ({ ...prev, drwNo: e.target.value }))}
+                      className="w-full bg-white/80 border border-blue-200 rounded px-2 py-1 text-center font-mono outline-none focus:ring-2 focus:ring-blue-400"
+                    />
+                  </td>
+                  <td className="border-r border-slate-900 p-1.5">
+                    <input 
+                      type="text"
+                      placeholder="S"
+                      value={newPart.s}
+                      onChange={(e) => setNewPart(prev => ({ ...prev, s: e.target.value }))}
+                      className="w-full bg-white/80 border border-blue-200 rounded px-2 py-1 text-center font-bold outline-none focus:ring-2 focus:ring-blue-400"
+                    />
+                  </td>
+                  <td className="border-r border-slate-900 p-1.5">
+                    <input 
+                      type="text"
+                      placeholder="PART NAME"
+                      value={newPart.partsName}
+                      onChange={(e) => setNewPart(prev => ({ ...prev, partsName: e.target.value }))}
+                      className="w-full bg-white/80 border border-blue-200 rounded px-2 py-1 text-left font-medium outline-none focus:ring-2 focus:ring-blue-400"
+                    />
+                  </td>
+                </>
+              )}
+              <td className="border-r border-slate-900 p-1.5 text-center text-slate-400 italic">자동 생성</td>
+              <td className="border-r border-slate-900 p-1.5 text-center text-slate-400 italic">-</td>
+              <td className="p-1.5 text-center">
+                <div className="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center mx-auto">
+                  <Save size={12} className="text-blue-600" />
+                </div>
+              </td>
+            </tr>
             {localParts.length === 0 && (
               <tr>
-                <td colSpan={6} className="text-center py-20 text-slate-400 font-medium bg-slate-50">
+                <td colSpan={7} className="text-center py-20 text-slate-400 font-medium bg-slate-50">
                   <AlertCircle className="mx-auto mb-3 opacity-20" size={40} />
                   데이터가 없습니다. 엑셀 파일을 업로드해주세요.<br/>
                   <span className="text-[11px] opacity-60 mt-2 block">(대시보드에서 '{processName}' 텍스트 클릭)</span>
@@ -324,14 +493,21 @@ const ProcessTable = ({
           </tbody>
         </table>
       </div>
+
+      <div className="flex justify-center pt-2">
+        <button 
+          onClick={handleAddRow}
+          className="flex items-center gap-2 bg-slate-900 text-white px-12 py-3 rounded-xl font-black text-sm hover:bg-slate-800 transition-all shadow-xl shadow-slate-200 hover:scale-[1.02] active:scale-[0.98]"
+        >
+          <Save size={18} />
+          <span>새로운 행 추가하기</span>
+        </button>
+      </div>
     </div>
   );
 };
 
-const ProcessBase = ({ name, projectId, tasks, processParts, headers, excelTitle, onAddTask, onUpdateTaskStatus, onBatchUpdateParts, onDeleteParts, onUploadExcel, userInitials, colorClass, showAlert, showConfirm, showPasswordPrompt, showAllStatuses = false }: Omit<ProcessProps, 'onUpdatePart'> & { name: string, colorClass: string, showAllStatuses?: boolean }) => {
-  const [newType, setNewType] = React.useState('');
-  const [newDesc, setNewDesc] = React.useState('');
-
+const ProcessBase = ({ name, projectId, processParts, headers, excelTitle, onAddPart, onDeletePart, onBatchUpdateParts, onDeleteParts, onUploadExcel, userInitials, colorClass, showAlert, showConfirm, showPasswordPrompt }: Omit<ProcessProps, 'onUpdatePart' | 'tasks' | 'onAddTask' | 'onUpdateTaskStatus' | 'onUpdateTask'> & { name: string, colorClass: string }) => {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -348,7 +524,7 @@ const ProcessBase = ({ name, projectId, tasks, processParts, headers, excelTitle
           </div>
           <div>
             <h4 className="text-lg font-black text-slate-800">{name} 공정 데이터</h4>
-            <p className="text-xs text-slate-400 font-medium">엑셀 파일을 업로드하여 부품 목록을 관리하세요</p>
+            <p className="text-xs text-slate-400 font-medium">엑셀 파일을 업로드하거나 행을 직접 추가하여 부품 목록을 관리하세요</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -376,137 +552,19 @@ const ProcessBase = ({ name, projectId, tasks, processParts, headers, excelTitle
         headers={headers}
         excelTitle={excelTitle}
         userInitials={userInitials}
+        onAddPart={onAddPart}
+        onDeletePart={onDeletePart}
         onBatchUpdateParts={onBatchUpdateParts}
         onDeleteParts={onDeleteParts}
         showAlert={showAlert}
         showConfirm={showConfirm}
         showPasswordPrompt={showPasswordPrompt}
       />
-
-      <div className="space-y-4 mt-8">
-        <div className="flex items-center gap-2 mb-2">
-          <div className="w-1.5 h-5 bg-slate-900 rounded-full" />
-          <h4 className="text-sm font-black text-slate-800 uppercase tracking-widest">{name} 작업 리스트</h4>
-        </div>
-        
-        <div className="overflow-hidden border border-slate-200 rounded-xl shadow-sm">
-          <table className="w-full border-collapse text-xs bg-white">
-            <thead>
-              <tr className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200">
-                <th className="p-3 text-left w-[20%]">타입</th>
-                <th className="p-3 text-left w-[45%]">상세 내용</th>
-                <th className="p-3 text-center w-[35%]">상태</th>
-              </tr>
-              <tr className="bg-white border-b border-slate-100">
-                <td className="p-2">
-                  <input 
-                    type="text" 
-                    placeholder="타입 입력" 
-                    value={newType}
-                    onChange={(e) => setNewType(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs outline-none focus:ring-2 focus:ring-blue-100"
-                  />
-                </td>
-                <td className="p-2">
-                  <input 
-                    type="text" 
-                    placeholder="상세 내용 입력" 
-                    value={newDesc}
-                    onChange={(e) => setNewDesc(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs outline-none focus:ring-2 focus:ring-blue-100"
-                  />
-                </td>
-                <td className="p-2 text-center">
-                  <button 
-                    onClick={() => {
-                      if (newType && newDesc) {
-                        onAddTask(projectId, name, newType, newDesc);
-                        setNewType('');
-                        setNewDesc('');
-                      }
-                    }}
-                    className="bg-slate-900 text-white px-4 py-2 rounded-lg text-[10px] font-black hover:bg-slate-800 transition-all"
-                  >
-                    작업 추가
-                  </button>
-                </td>
-              </tr>
-            </thead>
-            <tbody>
-              {tasks.map(task => (
-                <tr key={task.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
-                  <td className="p-3 font-black text-blue-600 uppercase tracking-tighter">{task.type}</td>
-                  <td className="p-3 font-bold text-slate-800">{task.description}</td>
-                  <td className="p-3 text-center">
-                    <div className="flex items-center justify-center gap-1.5">
-                      {showAllStatuses ? (
-                        (['pending', 'in-progress', 'completed'] as TaskStatus[]).map(status => (
-                          <button
-                            key={status}
-                            onClick={() => onUpdateTaskStatus(task.id, status, projectId, name)}
-                            className={cn(
-                              "px-2.5 py-1.5 rounded-lg text-[9px] font-black transition-all flex flex-col items-center",
-                              task.status === status 
-                                ? (status === 'completed' ? "bg-emerald-100 text-emerald-700 border border-emerald-200" : 
-                                   status === 'in-progress' ? "bg-blue-100 text-blue-700 border border-blue-200" : 
-                                   "bg-slate-200 text-slate-700 border border-slate-300")
-                                : "text-slate-400 hover:bg-slate-100 border border-transparent"
-                            )}
-                          >
-                            <span>{status === 'pending' ? '보류' : status === 'in-progress' ? '진행' : '완료'}</span>
-                            {status === 'completed' && task.status === 'completed' && task.completedAt && (
-                              <span className="text-[7px] opacity-70 mt-0.5 font-medium leading-none">
-                                {new Date(task.completedAt).toLocaleDateString().slice(2)} {new Date(task.completedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}
-                              </span>
-                            )}
-                          </button>
-                        ))
-                      ) : (
-                        <button
-                          onClick={() => {
-                            const newStatus = task.status === 'completed' ? 'pending' : 'completed';
-                            onUpdateTaskStatus(task.id, newStatus, projectId, name);
-                          }}
-                          className={cn(
-                            "px-4 py-2 rounded-xl text-xs font-black transition-all min-w-[120px] border",
-                            task.status === 'completed' 
-                              ? "bg-emerald-50 text-emerald-700 border-emerald-200 shadow-sm" 
-                              : "bg-slate-50 text-slate-400 hover:bg-slate-100 border-slate-200"
-                          )}
-                        >
-                          {task.status === 'completed' ? (
-                            <div className="flex flex-col leading-tight">
-                              <span className="font-black text-[10px]">완료</span>
-                              {task.completedAt && (
-                                <span className="text-[8px] opacity-80 font-medium">
-                                  {new Date(task.completedAt).toLocaleDateString()} {new Date(task.completedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                  {task.initials && ` [${task.initials}]`}
-                                </span>
-                              )}
-                            </div>
-                          ) : '완료'}
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {tasks.length === 0 && (
-                <tr>
-                  <td colSpan={3} className="p-12 text-center text-slate-400 italic bg-slate-50/30">
-                    추가된 작업이 없습니다. 상단 입력란을 통해 작업을 추가하세요.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
     </div>
   );
 };
 
-export const Injection = (props: ProcessProps) => <ProcessBase name="사출" colorClass="bg-blue-50/50" showAllStatuses={true} {...props} />;
+export const Injection = (props: ProcessProps) => <ProcessBase name="사출" colorClass="bg-blue-50/50" {...props} />;
 export const Printing = (props: ProcessProps) => <ProcessBase name="인쇄" colorClass="bg-indigo-50/50" {...props} />;
 export const Metal = (props: ProcessProps) => <ProcessBase name="메탈" colorClass="bg-slate-100/50" {...props} />;
 export const Paint = (props: ProcessProps) => <ProcessBase name="PAINT" colorClass="bg-rose-50/50" {...props} />;
