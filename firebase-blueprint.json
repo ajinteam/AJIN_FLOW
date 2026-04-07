@@ -57,14 +57,14 @@
         "processName": { "type": "string" },
         "moldNo": { "type": "string" },
         "drwNo": { "type": "string" },
-        "s": { "type": "string" },
+        "work": { "type": "string" },
         "partsName": { "type": "string" },
         "completedAt": { "type": "string", "format": "date-time" },
         "delayReason": { "type": "string" },
         "delayType": { "type": "string" },
         "order": { "type": "number" }
       },
-      "required": ["projectId", "processName", "moldNo", "drwNo", "s", "partsName", "order"]
+      "required": ["projectId", "processName", "moldNo", "drwNo", "work", "partsName", "order"]
     }
   },
   "firestore": {

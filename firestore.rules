@@ -18,7 +18,7 @@ service cloud.firestore {
     // Fields: initials, password, isAuthorized
     //
     // Collection: processParts
-    // Fields: projectId, processName, moldNo, drwNo, s, partsName, completedAt, delayReason, delayType, order
+    // Fields: projectId, processName, moldNo, drwNo, work, partsName, completedAt, delayReason, delayType, order
     //
     // ===============================================================
 
@@ -55,7 +55,7 @@ service cloud.firestore {
              data.processName is string &&
              data.moldNo is string &&
              data.drwNo is string &&
-             data.s is string &&
+             data.work is string &&
              data.partsName is string &&
              data.order is number;
     }

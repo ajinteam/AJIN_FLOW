@@ -56,7 +56,7 @@ export interface ProcessPart {
   processName: string;
   moldNo: string;
   drwNo: string;
-  s: string;
+  work: string;
   partsName: string;
   plannedAt?: string | null;
   completedAt: string | null;

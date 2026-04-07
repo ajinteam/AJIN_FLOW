@@ -535,11 +535,6 @@ function Dashboard() {
   };
 
   const handleDeleteProject = async (id: string) => {
-    const project = projects.find(p => p.id === id);
-    if (project?.status === 'completed') {
-      showAlert('삭제 불가', '생산 완료된 프로젝트는 삭제할 수 없습니다.', 'error');
-      return;
-    }
     const isAuthorized = userInitials === 'MASTER' || localStorage.getItem('isAuthorized') === 'true';
     if (!isAuthorized) {
       showAlert('권한 없음', '데이터 삭제 권한이 없습니다.', 'error');
@@ -670,19 +665,30 @@ function Dashboard() {
         // Improved header detection with scoring
         const keywords = [
           'MOLD', '인쇄물', '부품명', 'PART', '공정', '도번', '품명', 'DWG', 
-          'DESCRIPTION', '완료', 'DELAY', 'NO', 'NAME', 'S', '비고', 'REMARK'
+          'DESCRIPTION', '완료', 'DELAY', 'NO', 'NAME', 'S', '비고', 'REMARK',
+          'TYPE', 'DN', '도면', 'DRAWING'
         ];
         
         let headerRowIndex = -1;
         let maxMatches = 0;
 
-        for (let i = 0; i < Math.min(jsonData.length, 30); i++) {
+        for (let i = 0; i < Math.min(jsonData.length, 50); i++) {
           const row = jsonData[i];
           if (row && row.some(cell => cell !== "")) {
             let matches = 0;
             row.forEach(cell => {
-              const s = String(cell).toUpperCase().replace(/\s/g, '');
-              if (keywords.some(k => s.includes(k))) {
+              const cellVal = String(cell).toUpperCase().replace(/\s/g, '');
+              if (!cellVal) return;
+
+              const hasMatch = keywords.some(k => {
+                if (k === 'S') return cellVal === 'S';
+                if (k === 'DN' || k === 'TYPE' || k === 'NO') {
+                  return cellVal === k || cellVal.includes(k);
+                }
+                return cellVal.includes(k);
+              });
+              
+              if (hasMatch) {
                 matches++;
               }
             });
@@ -743,11 +749,14 @@ function Dashboard() {
         // Map columns for internal fields (moldNo, drwNo, etc.) using original indices
         const findRawIdx = (keys: string[]) => rawHeaders.findIndex(h => {
           const s = String(h).toUpperCase().replace(/\s/g, '');
-          return keys.some(k => s.includes(k));
+          return keys.some(k => {
+            if (k === 'S') return s === 'S';
+            return s.includes(k);
+          });
         });
 
-        const moldIdx = findRawIdx(['MOLD', '공정', 'NO','TYPE']);
-        const drwIdx = findRawIdx(['도번', 'DWG', 'DRAWING']);
+        const moldIdx = findRawIdx(['MOLD', '공정', 'NO', 'TYPE']);
+        const drwIdx = findRawIdx(['도번', 'DWG', 'DRAWING', 'DN']);
         const nameIdx = findRawIdx(['품명', '부품', 'PART', 'NAME']);
         const sIdx = findRawIdx(['S', '작업', '상태']);
 
@@ -1058,23 +1067,21 @@ function Dashboard() {
                           <Save size={14} />
                         </button>
                         {project.status !== 'completed' && (
-                          <>
-                            <button 
-                              onClick={() => handleCompleteProject(project.id)}
-                              className="p-1.5 bg-slate-800 rounded-lg text-blue-500 hover:text-blue-400 transition-colors"
-                              title="생산 완료"
-                            >
-                              <CheckCircle2 size={14} />
-                            </button>
-                            <button 
-                              onClick={() => handleDeleteProject(project.id)}
-                              className="p-1.5 bg-slate-800 rounded-lg text-slate-500 hover:text-rose-500 transition-colors"
-                              title="프로젝트 삭제"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </>
+                          <button 
+                            onClick={() => handleCompleteProject(project.id)}
+                            className="p-1.5 bg-slate-800 rounded-lg text-blue-500 hover:text-blue-400 transition-colors"
+                            title="생산 완료"
+                          >
+                            <CheckCircle2 size={14} />
+                          </button>
                         )}
+                        <button 
+                          onClick={() => handleDeleteProject(project.id)}
+                          className="p-1.5 bg-slate-800 rounded-lg text-slate-500 hover:text-rose-500 transition-colors"
+                          title="프로젝트 삭제"
+                        >
+                          <Trash2 size={14} />
+                        </button>
                       </div>
                       <div>
                         <h2 className="text-2xl font-black tracking-tight leading-none flex items-center gap-2">

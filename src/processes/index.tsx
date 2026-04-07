@@ -135,7 +135,7 @@ const ProcessTable = ({
         data: {
           moldNo: p.moldNo || '',
           drwNo: p.drwNo || '',
-          s: p.s || '',
+          work: p.work || '',
           partsName: p.partsName || '',
           plannedAt: p.plannedAt || null,
           completedAt: p.completedAt || null,
@@ -179,7 +179,7 @@ const ProcessTable = ({
   const [newPart, setNewPart] = React.useState({
     moldNo: '',
     drwNo: '',
-    s: '',
+    work: '',
     partsName: '',
     plannedAt: ''
   });
@@ -197,7 +197,7 @@ const ProcessTable = ({
     setNewPart({
       moldNo: '',
       drwNo: '',
-      s: '',
+      work: '',
       partsName: '',
       plannedAt: ''
     });
@@ -292,7 +292,7 @@ const ProcessTable = ({
                 <>
                   <th className="border-r border-slate-900 p-1.5 w-[12%] text-center">MOLD</th>
                   <th className="border-r border-slate-900 p-1.5 w-[15%] text-center">DN</th>
-                  <th className="border-r border-slate-900 p-1.5 w-[5%] text-center">S</th>
+                  <th className="border-r border-slate-900 p-1.5 w-[5%] text-center">WORK</th>
                   <th className="border-r border-slate-900 p-1.5 w-[28%] text-center">PART NAME</th>
                 </>
               )}
@@ -344,11 +344,11 @@ const ProcessTable = ({
                               String(part.rawData[i])
                             ) : (
                             <AutoResizeTextarea 
-                              value={i === 1 ? (part.drwNo || '') : i === 2 ? (part.s || '') : i === 3 ? (part.partsName || '') : ''}
+                              value={i === 1 ? (part.drwNo || '') : i === 2 ? (part.work || '') : i === 3 ? (part.partsName || '') : ''}
                               onChange={(e) => {
                                 const val = e.target.value;
                                 if (i === 1) handleLocalUpdate(part.id, { drwNo: val });
-                                else if (i === 2) handleLocalUpdate(part.id, { s: val });
+                                else if (i === 2) handleLocalUpdate(part.id, { work: val });
                                 else if (i === 3) handleLocalUpdate(part.id, { partsName: val });
                               }}
                               disabled={isReadOnly}
@@ -391,8 +391,8 @@ const ProcessTable = ({
                           pIdx === group.parts.length - 1 ? "border-b-2 border-b-slate-900" : "border-b-0"
                         )}>
                           <AutoResizeTextarea 
-                            value={part.s || ''}
-                            onChange={(e) => handleLocalUpdate(part.id, { s: e.target.value })}
+                            value={part.work || ''}
+                            onChange={(e) => handleLocalUpdate(part.id, { work: e.target.value })}
                             disabled={isReadOnly}
                             className="text-center font-bold focus:bg-blue-50 disabled:cursor-default"
                           />
@@ -512,12 +512,12 @@ const ProcessTable = ({
                   <td key={i} className="border-r border-slate-900 p-1.5">
                     <AutoResizeTextarea 
                       placeholder={headers[i]}
-                      value={i === 0 ? newPart.moldNo : i === 1 ? newPart.drwNo : i === 2 ? newPart.s : i === 3 ? newPart.partsName : ''}
+                      value={i === 0 ? newPart.moldNo : i === 1 ? newPart.drwNo : i === 2 ? newPart.work : i === 3 ? newPart.partsName : ''}
                       onChange={(e) => {
                         const val = e.target.value;
                         if (i === 0) setNewPart(prev => ({ ...prev, moldNo: val }));
                         else if (i === 1) setNewPart(prev => ({ ...prev, drwNo: val }));
-                        else if (i === 2) setNewPart(prev => ({ ...prev, s: val }));
+                        else if (i === 2) setNewPart(prev => ({ ...prev, work: val }));
                         else if (i === 3) setNewPart(prev => ({ ...prev, partsName: val }));
                       }}
                       className="bg-white/80 border border-blue-200 rounded px-2 py-1 text-center font-bold focus:ring-2 focus:ring-blue-400"
@@ -544,9 +544,9 @@ const ProcessTable = ({
                   </td>
                   <td className="border-r border-slate-900 p-1.5">
                     <AutoResizeTextarea 
-                      placeholder="S"
-                      value={newPart.s}
-                      onChange={(e) => setNewPart(prev => ({ ...prev, s: e.target.value }))}
+                      placeholder="WORK"
+                      value={newPart.work}
+                      onChange={(e) => setNewPart(prev => ({ ...prev, work: e.target.value }))}
                       className="bg-white/80 border border-blue-200 rounded px-2 py-1 text-center font-bold focus:ring-2 focus:ring-blue-400"
                     />
                   </td>
