@@ -512,7 +512,7 @@ function Dashboard() {
       await addDoc(collection(db, 'processes'), {
         projectId: docRef.id,
         name,
-        targetDate: data.foDate, // Default to FO date
+        targetDate: '', // Start empty so it shows D-0
         progress: 0
       });
     });
@@ -1036,7 +1036,7 @@ function Dashboard() {
             const totalProgress = projectProcesses.length > 0 
               ? Math.round(projectProcesses.reduce((acc, p) => acc + p.progress, 0) / projectProcesses.length)
               : 0;
-            const foDDay = differenceInDays(parseISO(project.foDate), today);
+            const foDDay = project.foDate ? differenceInDays(parseISO(project.foDate), today) : 0;
 
             return (
               <div key={project.id} className="bg-white rounded-2xl shadow-md border border-slate-200 overflow-hidden">
@@ -1096,8 +1096,8 @@ function Dashboard() {
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className={cn("text-2xl font-black leading-none", foDDay < 0 ? "text-rose-500" : "text-blue-400")}>
-                        {foDDay === 0 ? 'D-DAY' : foDDay > 0 ? `D-${foDDay}` : `D+${Math.abs(foDDay)}`}
+                      <p className={cn("text-2xl font-black leading-none", !project.foDate ? "text-blue-400" : (foDDay < 0 ? "text-rose-500" : "text-blue-400"))}>
+                        {!project.foDate || foDDay === 0 ? 'D-0' : foDDay > 0 ? `D-${foDDay}` : `D+${Math.abs(foDDay)}`}
                       </p>
                       <div className="flex items-center justify-end gap-1 mt-1">
                         {project.foDateHistory && project.foDateHistory.length > 0 && (
@@ -1116,11 +1116,11 @@ function Dashboard() {
                             }
                           }}
                           className={cn(
-                            "text-[10px] font-bold",
+                            "text-[10px] font-black font-mono",
                             project.status === 'completed' ? "text-slate-500 cursor-default" : (project.foDateHistory && project.foDateHistory.length > 0 ? "text-red-500 hover:text-red-400" : "text-slate-400 hover:text-blue-400")
                           )}
                         >
-                          {project.foDate.split('T')[0]}
+                          {project.foDate ? project.foDate.split('T')[0] : '연도-월-일'}
                         </button>
                       </div>
                     </div>
@@ -1383,7 +1383,7 @@ const ProjectModal = ({ project, onClose, onSubmit }: {
   const [name, setName] = useState(project?.name || '');
   const [model, setModel] = useState(project?.model || '');
   const [quantity, setQuantity] = useState(project?.targetQuantity || 5000);
-  const [foDate, setFoDate] = useState(project?.foDate.split('T')[0] || format(new Date(), 'yyyy-MM-dd'));
+  const [foDate, setFoDate] = useState(project?.foDate?.split('T')[0] || '');
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
@@ -1437,7 +1437,7 @@ const ProjectModal = ({ project, onClose, onSubmit }: {
             />
           </div>
           <button 
-            onClick={() => onSubmit({ name, model, targetQuantity: quantity, foDate: new Date(foDate).toISOString() })}
+            onClick={() => onSubmit({ name, model, targetQuantity: quantity, foDate: foDate ? new Date(foDate).toISOString() : '' })}
             className="w-full bg-blue-600 text-white py-2 rounded-lg font-bold hover:bg-blue-700 transition-colors"
           >
             {project ? '수정 완료' : '생성하기'}
