@@ -769,6 +769,8 @@ function Dashboard() {
           chunk.forEach((row, idx) => {
             if (row.every(cell => !cell)) return;
             
+            const defaultLocation = ['사출', '인쇄', '메탈'].includes(processName) ? '서울' : '대천';
+            
             const docRef = doc(collection(db, 'processParts'));
             batch.set(docRef, {
               projectId,
@@ -777,6 +779,7 @@ function Dashboard() {
               drwNo: drwIdx !== -1 && row[drwIdx] ? String(row[drwIdx]) : (row[1] ? String(row[1]) : ''),
               s: sIdx !== -1 && row[sIdx] ? String(row[sIdx]) : (row[2] ? String(row[2]) : ''),
               partsName: nameIdx !== -1 && row[nameIdx] ? String(row[nameIdx]) : (row[3] ? String(row[3]) : ''),
+              productionLocation: defaultLocation,
               plannedAt: null,
               completedAt: null,
               delayReason: '',
@@ -830,6 +833,8 @@ function Dashboard() {
       .filter(p => p.projectId === projectId && p.processName === processName)
       .reduce((max, p) => Math.max(max, p.order || 0), 0);
 
+    const defaultLocation = ['사출', '인쇄', '메탈'].includes(processName) ? '서울' : '대천';
+
     await addDoc(collection(db, 'processParts'), {
       projectId,
       processName,
@@ -837,6 +842,7 @@ function Dashboard() {
       drwNo: data.drwNo || '',
       s: data.s || '',
       partsName: data.partsName || '',
+      productionLocation: data.productionLocation || defaultLocation,
       completedAt: null,
       delayReason: '',
       delayType: '',

@@ -58,6 +58,7 @@ export interface ProcessPart {
   drwNo: string;
   s: string;
   partsName: string;
+  productionLocation?: string;
   plannedAt?: string | null;
   completedAt: string | null;
   initials?: string;

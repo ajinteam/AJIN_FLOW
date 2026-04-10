@@ -137,6 +137,7 @@ const ProcessTable = ({
           drwNo: p.drwNo || '',
           s: p.s || '',
           partsName: p.partsName || '',
+          productionLocation: p.productionLocation || '',
           plannedAt: p.plannedAt || null,
           completedAt: p.completedAt || null,
           initials: p.initials || null,
@@ -181,8 +182,16 @@ const ProcessTable = ({
     drwNo: '',
     s: '',
     partsName: '',
+    productionLocation: ['사출', '인쇄', '메탈'].includes(processName) ? '서울' : '대천',
     plannedAt: ''
   });
+
+  React.useEffect(() => {
+    setNewPart(prev => ({
+      ...prev,
+      productionLocation: ['사출', '인쇄', '메탈'].includes(processName) ? '서울' : '대천'
+    }));
+  }, [processName]);
 
   const handleAddRow = () => {
     if (isReadOnly) return;
@@ -199,6 +208,7 @@ const ProcessTable = ({
       drwNo: '',
       s: '',
       partsName: '',
+      productionLocation: ['사출', '인쇄', '메탈'].includes(processName) ? '서울' : '대천',
       plannedAt: ''
     });
   };
@@ -291,14 +301,15 @@ const ProcessTable = ({
               ) : (
                 <>
                   <th className="border-r border-slate-900 p-1.5 w-[12%] text-center">MOLD</th>
-                  <th className="border-r border-slate-900 p-1.5 w-[15%] text-center">DN</th>
+                  <th className="border-r border-slate-900 p-1.5 w-[7.5%] text-center">DN</th>
                   <th className="border-r border-slate-900 p-1.5 w-[5%] text-center">S</th>
-                  <th className="border-r border-slate-900 p-1.5 w-[28%] text-center">PART NAME</th>
+                  <th className="border-r border-slate-900 p-1.5 w-[34.5%] text-center">PART NAME</th>
                 </>
               )}
-              <th className="border-r border-slate-900 p-1.5 w-[10%] text-center">계획</th>
+              <th className="border-r border-slate-900 p-1.5 w-[6%] text-center">생산</th>
+              <th className="border-r border-slate-900 p-1.5 w-[10%] text-center">내계획</th>
               <th className="border-r border-slate-900 p-1.5 w-[12%] text-center">완료</th>
-              <th className="border-r border-slate-900 p-1.5 w-[8%] text-center">지연(일)</th>
+              <th className="border-r border-slate-900 p-1.5 w-[6%] text-center">지연(일)</th>
               <th className="border-r border-slate-900 p-1.5 w-[20%] text-center">DELAY 사유</th>
               <th className="p-1.5 w-[5%] text-center">삭제</th>
             </tr>
@@ -338,7 +349,8 @@ const ProcessTable = ({
                           <td key={i} className={cn(
                             "border-r border-slate-900 p-1.5 text-center font-mono text-slate-700 break-words whitespace-normal",
                             pIdx === 0 && "border-t-2 border-t-slate-900",
-                            pIdx === group.parts.length - 1 ? "border-b-2 border-b-slate-900" : "border-b-0"
+                            pIdx === group.parts.length - 1 ? "border-b-2 border-b-slate-900" : "border-b-0",
+                            (i === 2 || i === 3) && "font-bold text-slate-900"
                           )}>
                             {part.rawData && part.rawData[i] !== undefined && part.rawData[i] !== null ? (
                               String(part.rawData[i])
@@ -352,7 +364,10 @@ const ProcessTable = ({
                                 else if (i === 3) handleLocalUpdate(part.id, { partsName: val });
                               }}
                               disabled={isReadOnly}
-                              className="text-center font-mono focus:bg-sky-100 disabled:cursor-default"
+                              className={cn(
+                                "text-center font-mono focus:bg-sky-100 disabled:cursor-default",
+                                (i === 2 || i === 3) && "font-bold"
+                              )}
                             />
                             )}
                           </td>
@@ -398,7 +413,7 @@ const ProcessTable = ({
                           />
                         </td>
                         <td className={cn(
-                          "border-r border-slate-900 p-1.5 font-medium text-slate-800 px-2 text-left break-words whitespace-normal",
+                          "border-r border-slate-900 p-1.5 font-bold text-slate-800 px-2 text-left break-words whitespace-normal",
                           pIdx === 0 && "border-t-2 border-t-slate-900",
                           pIdx === group.parts.length - 1 ? "border-b-2 border-b-slate-900" : "border-b-0"
                         )}>
@@ -406,7 +421,7 @@ const ProcessTable = ({
                             value={part.partsName || ''}
                             onChange={(e) => handleLocalUpdate(part.id, { partsName: e.target.value })}
                             disabled={isReadOnly}
-                            className="text-left font-medium focus:bg-sky-100 disabled:cursor-default"
+                            className="text-left font-bold focus:bg-sky-100 disabled:cursor-default"
                           />
                         </td>
                       </>
@@ -414,6 +429,21 @@ const ProcessTable = ({
                     
                     {pIdx === 0 && (
                       <>
+                        <td 
+                          rowSpan={group.parts.length} 
+                          className="border-r border-slate-900 border-t-2 border-t-slate-900 border-b-2 border-b-slate-900 p-1.5 text-center align-middle bg-white"
+                        >
+                          <select
+                            value={part.productionLocation || (['사출', '인쇄', '메탈'].includes(processName) ? '서울' : '대천')}
+                            onChange={(e) => handleUpdateGroupLocal(group.parts, { productionLocation: e.target.value })}
+                            disabled={isReadOnly}
+                            className="w-full bg-transparent border-none text-center font-bold outline-none focus:bg-sky-100 text-xs cursor-pointer"
+                          >
+                            <option value="대천">대천</option>
+                            <option value="서울">서울</option>
+                            <option value="베트남">베트남</option>
+                          </select>
+                        </td>
                         <td 
                           rowSpan={group.parts.length} 
                           className="border-r border-slate-900 border-t-2 border-t-slate-900 border-b-2 border-b-slate-900 p-1.5 text-center align-middle bg-white"
@@ -555,11 +585,22 @@ const ProcessTable = ({
                       placeholder="PART NAME"
                       value={newPart.partsName}
                       onChange={(e) => setNewPart(prev => ({ ...prev, partsName: e.target.value }))}
-                      className="bg-white/80 border border-sky-200 rounded px-2 py-1 text-left font-medium focus:ring-2 focus:ring-sky-400"
+                      className="bg-white/80 border border-sky-200 rounded px-2 py-1 text-left font-bold focus:ring-2 focus:ring-sky-400"
                     />
                   </td>
                 </>
               )}
+              <td className="border-r border-slate-900 p-1.5">
+                <select
+                  value={newPart.productionLocation}
+                  onChange={(e) => setNewPart(prev => ({ ...prev, productionLocation: e.target.value }))}
+                  className="w-full bg-white/80 border border-sky-200 rounded px-2 py-1 text-center font-bold outline-none focus:ring-2 focus:ring-sky-400 text-xs"
+                >
+                  <option value="대천">대천</option>
+                  <option value="서울">서울</option>
+                  <option value="베트남">베트남</option>
+                </select>
+              </td>
               <td className="border-r border-slate-900 p-1.5">
                 <input 
                   type="date"
