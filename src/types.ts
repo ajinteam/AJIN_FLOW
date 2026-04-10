@@ -78,14 +78,14 @@ export interface AssemblyPart extends ProcessPart {}
 export interface PackagingPart extends ProcessPart {}
 
 export const PROCESS_LIST = [
-  '사출',
+  'INJECTION',
   'ETCHING',
-  '메탈',
+  'METAL',
   'PAINT',
   'PRINT',
-  '가공',
-  '조립',
-  '포장'
+  'PRESS',
+  'ASSEMBLY',
+  'PACKING'
 ] as const;
 
 export type ProcessName = typeof PROCESS_LIST[number];
