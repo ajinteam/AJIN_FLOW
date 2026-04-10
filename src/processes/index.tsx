@@ -165,8 +165,8 @@ const ProcessTable = ({
 
     showPasswordPrompt('데이터 초기화', '데이터를 삭제하시겠습니까? 비밀번호를 입력하세요.', async (password) => {
       const storedPassword = localStorage.getItem('currentUserPassword');
-      const inputPassword = password.trim();
-      if (inputPassword === storedPassword || inputPassword === 'AJ5200' || inputPassword.toUpperCase() === 'AJ5200') {
+      const inputPassword = password.trim().toUpperCase();
+      if (inputPassword === storedPassword?.toUpperCase() || inputPassword === 'AJ5200') {
         showConfirm('최종 확인', '정말로 모든 데이터를 삭제하시겠습니까?', async () => {
           await onDeleteParts(projectId, processName);
           showAlert('초기화 완료', '데이터가 초기화되었습니다.', 'success');

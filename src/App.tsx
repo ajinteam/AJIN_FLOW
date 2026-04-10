@@ -67,21 +67,21 @@ const Auth = ({ users, onLogin }: { users: UserConfig[], onLogin: (initials: str
     setError('');
 
     try {
-      const inputPassword = password.trim();
+      const inputPassword = password.trim().toUpperCase();
       
-      if (inputPassword === MASTER_PASSWORD || inputPassword.toUpperCase() === MASTER_PASSWORD) {
+      if (inputPassword === MASTER_PASSWORD.toUpperCase()) {
         onLogin('MASTER', MASTER_PASSWORD);
         localStorage.setItem('isAuthorized', 'true');
         localStorage.setItem('currentUserPassword', MASTER_PASSWORD);
         return;
       }
 
-      const user = users.find(u => u.password === inputPassword);
+      const user = users.find(u => u.password.toUpperCase() === inputPassword);
 
       if (user) {
-        onLogin(user.initials, inputPassword);
+        onLogin(user.initials, user.password);
         localStorage.setItem('isAuthorized', user.isAuthorized ? 'true' : 'false');
-        localStorage.setItem('currentUserPassword', inputPassword);
+        localStorage.setItem('currentUserPassword', user.password);
       } else {
         setError('비밀번호가 틀렸습니다.');
       }
@@ -624,8 +624,8 @@ function Dashboard({ initialData, persistData, refreshData }: {
 
     showPasswordPrompt('프로젝트 삭제', '프로젝트를 삭제하시겠습니까? 비밀번호를 입력하세요.', async (password) => {
       const storedPassword = localStorage.getItem('currentUserPassword');
-      const inputPassword = password.trim();
-      if (inputPassword === storedPassword || inputPassword === MASTER_PASSWORD || inputPassword.toUpperCase() === MASTER_PASSWORD) {
+      const inputPassword = password.trim().toUpperCase();
+      if (inputPassword === storedPassword?.toUpperCase() || inputPassword === MASTER_PASSWORD.toUpperCase()) {
         showConfirm('최종 확인', '정말로 이 프로젝트와 관련된 모든 데이터를 삭제하시겠습니까?', async () => {
           try {
             const updatedProjects = projects.filter(p => p.id !== id);
