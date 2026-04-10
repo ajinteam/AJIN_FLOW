@@ -1,27 +1,4 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  collection, 
-  query, 
-  where, 
-  getDocs, 
-  addDoc, 
-  onSnapshot,
-  doc,
-  updateDoc,
-  deleteDoc,
-  orderBy,
-  Timestamp,
-  getDocFromServer,
-  writeBatch
-} from 'firebase/firestore';
-import { 
-  signInWithPopup, 
-  GoogleAuthProvider, 
-  onAuthStateChanged,
-  signOut,
-  User as FirebaseUser
-} from 'firebase/auth';
-import { db, auth } from './firebase';
+import React, { useState, useEffect, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 import { Project, Process, Task, PROCESS_LIST, ProcessName, TaskStatus, UserConfig, ProcessPart } from './types';
 import { format, differenceInDays, parseISO } from 'date-fns';
@@ -43,58 +20,27 @@ enum OperationType {
   WRITE = 'write',
 }
 
-interface FirestoreErrorInfo {
+interface RedisErrorInfo {
   error: string;
   operationType: OperationType;
   path: string | null;
-  authInfo: {
-    userId: string | undefined;
-    email: string | null | undefined;
-    emailVerified: boolean | undefined;
-    isAnonymous: boolean | undefined;
-    tenantId: string | null | undefined;
-    providerInfo: {
-      providerId: string;
-      displayName: string | null;
-      email: string | null;
-      photoUrl: string | null;
-    }[];
-  }
 }
 
-function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData.map(provider => ({
-        providerId: provider.providerId,
-        displayName: provider.displayName,
-        email: provider.email,
-        photoUrl: provider.photoURL
-      })) || []
-    },
+function handleRedisError(error: unknown, operationType: OperationType, path: string | null) {
+  let message = error instanceof Error ? error.message : String(error);
+  
+  if (message.includes('WRONGTYPE')) {
+    message = `Redis 데이터 타입 오류: "${path}" 키가 잘못된 형식으로 저장되어 있습니다. 데이터를 초기화하거나 Redis 콘솔에서 해당 키를 삭제해 주세요.`;
+  }
+
+  const errInfo: RedisErrorInfo = {
+    error: message,
     operationType,
     path
   };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  console.error('Redis Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }
-
-async function testConnection() {
-  try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-  } catch (error) {
-    if(error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration. ");
-    }
-  }
-}
-testConnection();
 
 const PROCESS_COLORS: Record<ProcessName, string> = {
   '사출': 'bg-sky-50/50',
@@ -110,7 +56,7 @@ const PROCESS_COLORS: Record<ProcessName, string> = {
 const MASTER_PASSWORD = 'AJ5200';
 
 // Simple Auth Component
-const Auth = ({ onLogin }: { onLogin: (initials: string, password: string) => void }) => {
+const Auth = ({ users, onLogin }: { users: UserConfig[], onLogin: (initials: string, password: string) => void }) => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -130,13 +76,11 @@ const Auth = ({ onLogin }: { onLogin: (initials: string, password: string) => vo
         return;
       }
 
-      const q = query(collection(db, 'users'), where('password', '==', inputPassword));
-      const snapshot = await getDocs(q);
+      const user = users.find(u => u.password === inputPassword);
 
-      if (!snapshot.empty) {
-        const userData = snapshot.docs[0].data() as UserConfig;
-        onLogin(userData.initials, inputPassword);
-        localStorage.setItem('isAuthorized', userData.isAuthorized ? 'true' : 'false');
+      if (user) {
+        onLogin(user.initials, inputPassword);
+        localStorage.setItem('isAuthorized', user.isAuthorized ? 'true' : 'false');
         localStorage.setItem('currentUserPassword', inputPassword);
       } else {
         setError('비밀번호가 틀렸습니다.');
@@ -191,44 +135,47 @@ const Auth = ({ onLogin }: { onLogin: (initials: string, password: string) => vo
 };
 
 // Settings Modal Component
-const SettingsModal = ({ onClose, showConfirm }: { onClose: () => void, showConfirm: (title: string, message: string, onConfirm: () => void) => void }) => {
-  const [users, setUsers] = useState<UserConfig[]>([]);
+const SettingsModal = ({ users, persistData, onClose, showConfirm }: { 
+  users: UserConfig[], 
+  persistData: (updates: any) => Promise<void>,
+  onClose: () => void, 
+  showConfirm: (title: string, message: string, onConfirm: () => void) => void 
+}) => {
   const [newInitials, setNewInitials] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
 
-  useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'users'), (snapshot) => {
-      setUsers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as UserConfig)));
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'users'));
-    return unsub;
-  }, []);
-
   const handleAddOrUpdateUser = async () => {
     if (!newInitials || !newPassword) return;
     
+    let updatedUsers = [...users];
     if (editingUserId) {
-      await updateDoc(doc(db, 'users', editingUserId), {
+      updatedUsers = updatedUsers.map(u => u.id === editingUserId ? {
+        ...u,
         initials: newInitials.toUpperCase(),
         password: newPassword
-      });
+      } : u);
       setEditingUserId(null);
     } else {
-      await addDoc(collection(db, 'users'), {
+      updatedUsers.push({
+        id: Date.now().toString(),
         initials: newInitials.toUpperCase(),
         password: newPassword,
         isAuthorized: false
       });
     }
     
+    await persistData({ users: updatedUsers });
     setNewInitials('');
     setNewPassword('');
   };
 
   const toggleAuthorization = async (user: UserConfig) => {
-    await updateDoc(doc(db, 'users', user.id), {
-      isAuthorized: !user.isAuthorized
-    });
+    const updatedUsers = users.map(u => u.id === user.id ? {
+      ...u,
+      isAuthorized: !u.isAuthorized
+    } : u);
+    await persistData({ users: updatedUsers });
   };
 
   const handleEditClick = (user: UserConfig) => {
@@ -239,7 +186,8 @@ const SettingsModal = ({ onClose, showConfirm }: { onClose: () => void, showConf
 
   const handleDeleteUser = async (id: string) => {
     showConfirm('사용자 삭제', '사용자를 삭제하시겠습니까?', async () => {
-      await deleteDoc(doc(db, 'users', id));
+      const updatedUsers = users.filter(u => u.id !== id);
+      await persistData({ users: updatedUsers });
     });
   };
 
@@ -338,6 +286,29 @@ const SettingsModal = ({ onClose, showConfirm }: { onClose: () => void, showConf
               ))}
             </div>
           </div>
+
+          <div className="pt-4 border-t border-slate-100">
+            <button 
+              onClick={() => {
+                showConfirm('데이터 초기화', '모든 생산 데이터를 초기화하시겠습니까? (사용자 정보는 유지됩니다)', async () => {
+                  try {
+                    const res = await fetch('/api/reset', { method: 'POST' });
+                    if (res.ok) {
+                      window.location.reload();
+                    } else {
+                      alert('초기화 실패');
+                    }
+                  } catch (e) {
+                    alert('초기화 중 오류 발생');
+                  }
+                });
+              }}
+              className="w-full bg-red-50 text-red-600 py-3 rounded-xl font-bold hover:bg-red-100 transition-all border border-red-100 flex items-center justify-center gap-2"
+            >
+              <Trash2 size={18} />
+              전체 데이터 초기화
+            </button>
+          </div>
         </div>
       </motion.div>
     </div>
@@ -397,19 +368,152 @@ class ErrorBoundary extends React.Component<any, any> {
 
 // Main Dashboard
 export default function App() {
+  const [data, setData] = useState({
+    users: [] as UserConfig[],
+    projects: [] as Project[],
+    processes: [] as Process[],
+    tasks: [] as Task[],
+    processParts: [] as ProcessPart[]
+  });
+  const [loading, setLoading] = useState(true);
+  const [globalError, setGlobalError] = useState<string | null>(null);
+
+  const fetchData = useCallback(async () => {
+    try {
+      const res = await fetch('/api/data');
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || `Server error: ${res.status}`);
+      }
+      const json = await res.json();
+      const sanitizedData = {
+        users: Array.isArray(json.users) ? json.users : [],
+        projects: Array.isArray(json.projects) ? json.projects : [],
+        processes: Array.isArray(json.processes) ? json.processes : [],
+        tasks: Array.isArray(json.tasks) ? json.tasks : [],
+        processParts: Array.isArray(json.processParts) ? json.processParts : []
+      };
+      setData(sanitizedData);
+      setGlobalError(null);
+    } catch (error) {
+      console.error("Fetch error:", error);
+      setGlobalError(error instanceof Error ? error.message : "데이터를 불러오는데 실패했습니다.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const persistData = async (updates: any) => {
+    const newData = {
+      users: updates.users !== undefined ? updates.users : data.users,
+      projects: updates.projects !== undefined ? updates.projects : data.projects,
+      processes: updates.processes !== undefined ? updates.processes : data.processes,
+      tasks: updates.tasks !== undefined ? updates.tasks : data.tasks,
+      processParts: updates.processParts !== undefined ? updates.processParts : data.processParts,
+    };
+    
+    // Optimistic update
+    setData(newData);
+
+    try {
+      const res = await fetch('/api/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newData)
+      });
+      if (!res.ok) throw new Error('Failed to save');
+    } catch (error) {
+      console.error("Persist error:", error);
+      // Revert on error
+      fetchData();
+    }
+  };
+
+  if (globalError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
+        <div className="bg-white p-8 rounded-3xl shadow-xl border border-slate-200 max-w-md w-full text-center">
+          <div className="w-16 h-16 bg-red-100 text-red-600 rounded-2xl flex items-center justify-center mx-auto mb-6">
+            <AlertCircle size={32} />
+          </div>
+          <h2 className="text-xl font-black text-slate-800 mb-2">설정 오류</h2>
+          <p className="text-slate-500 mb-6 text-sm leading-relaxed">{globalError}</p>
+          <div className="flex flex-col gap-2">
+            <button 
+              onClick={() => fetchData()}
+              className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition-all"
+            >
+              다시 시도
+            </button>
+            {globalError.includes('wrong data type') && (
+              <button 
+                onClick={async () => {
+                  if (confirm('데이터를 초기화하시겠습니까? (모든 데이터가 삭제됩니다)')) {
+                    try {
+                      const res = await fetch('/api/reset', { method: 'POST' });
+                      if (res.ok) {
+                        fetchData();
+                      } else {
+                        alert('초기화 실패');
+                      }
+                    } catch (e) {
+                      alert('초기화 중 오류 발생');
+                    }
+                  }
+                }}
+                className="w-full bg-red-50 text-red-600 py-3 rounded-xl font-bold hover:bg-red-100 transition-all border border-red-100"
+              >
+                데이터 강제 초기화
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-100">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+
   return (
     <ErrorBoundary>
-      <Dashboard />
+      <Dashboard 
+        initialData={data} 
+        persistData={persistData} 
+        refreshData={fetchData}
+      />
     </ErrorBoundary>
   );
 }
 
-function Dashboard() {
+function Dashboard({ initialData, persistData, refreshData }: { 
+  initialData: any, 
+  persistData: (updates: any) => Promise<void>,
+  refreshData: () => Promise<void>
+}) {
   const [userInitials, setUserInitials] = useState<string | null>(localStorage.getItem('userInitials'));
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [processes, setProcesses] = useState<Process[]>([]);
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [processParts, setProcessParts] = useState<ProcessPart[]>([]);
+  const [projects, setProjects] = useState<Project[]>(initialData.projects || []);
+  const [processes, setProcesses] = useState<Process[]>(initialData.processes || []);
+  const [tasks, setTasks] = useState<Task[]>(initialData.tasks || []);
+  const [processParts, setProcessParts] = useState<ProcessPart[]>(initialData.processParts || []);
+  const [users, setUsers] = useState<UserConfig[]>(initialData.users || []);
+
+  useEffect(() => {
+    setProjects(initialData.projects || []);
+    setProcesses(initialData.processes || []);
+    setTasks(initialData.tasks || []);
+    setProcessParts(initialData.processParts || []);
+    setUsers(initialData.users || []);
+  }, [initialData]);
   const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -455,68 +559,32 @@ function Dashboard() {
     }
   }, [userInitials]);
 
-  useEffect(() => {
-    if (!userInitials) return;
-
-    const projectsUnsub = onSnapshot(query(collection(db, 'projects'), orderBy('sortOrder', 'asc')), (snapshot) => {
-      const fetchedProjects = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Project));
-      setProjects(fetchedProjects);
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'projects'));
-
-    // Migration: Ensure all projects have sortOrder
-    const ensureSortOrder = async () => {
-      const q = query(collection(db, 'projects'));
-      const snapshot = await getDocs(q);
-      snapshot.docs.forEach(async (docSnap) => {
-        const data = docSnap.data();
-        if (data.sortOrder === undefined) {
-          await updateDoc(doc(db, 'projects', docSnap.id), { 
-            sortOrder: Date.now() 
-          });
-        }
-      });
-    };
-    ensureSortOrder();
-
-    const processesUnsub = onSnapshot(collection(db, 'processes'), (snapshot) => {
-      setProcesses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Process)));
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'processes'));
-
-    const tasksUnsub = onSnapshot(collection(db, 'tasks'), (snapshot) => {
-      setTasks(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Task)));
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'tasks'));
-
-    const partsUnsub = onSnapshot(collection(db, 'processParts'), (snapshot) => {
-      setProcessParts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProcessPart)));
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'processParts'));
-
-    return () => {
-      projectsUnsub();
-      processesUnsub();
-      tasksUnsub();
-      partsUnsub();
-    };
-  }, [userInitials]);
-
   const handleCreateProject = async (data: Omit<Project, 'id' | 'createdAt' | 'sortOrder'>) => {
     const maxSortOrder = projects.length > 0 ? Math.max(...projects.map(p => p.sortOrder || 0)) : 0;
-    const docRef = await addDoc(collection(db, 'projects'), {
+    const newProjectId = Date.now().toString();
+    const newProject: Project = {
       ...data,
+      id: newProjectId,
       createdAt: new Date().toISOString(),
       sortOrder: maxSortOrder + 1,
       status: 'active'
-    });
+    };
 
+    const newProjects = [...projects, newProject];
+    
     // Initialize processes for the new project
-    PROCESS_LIST.forEach(async (name) => {
-      await addDoc(collection(db, 'processes'), {
-        projectId: docRef.id,
+    const newProcesses = [...processes];
+    PROCESS_LIST.forEach((name) => {
+      newProcesses.push({
+        id: (Date.now() + Math.random()).toString(),
+        projectId: newProjectId,
         name,
         targetDate: '', // Start empty so it shows D-0
         progress: 0
       });
     });
 
+    await persistData({ projects: newProjects, processes: newProcesses });
     setIsProjectModalOpen(false);
   };
 
@@ -526,11 +594,20 @@ function Dashboard() {
       showAlert('수정 불가', '생산 완료된 프로젝트는 수정할 수 없습니다.', 'error');
       return;
     }
-    if (project && data.foDate && project.foDate.split('T')[0] !== data.foDate.split('T')[0]) {
-      const history = project.foDateHistory || [];
-      data.foDateHistory = [...history, project.foDate];
-    }
-    await updateDoc(doc(db, 'projects', id), data);
+    
+    const updatedProjects = projects.map(p => {
+      if (p.id === id) {
+        const updates: any = { ...data };
+        if (data.foDate && p.foDate.split('T')[0] !== data.foDate.split('T')[0]) {
+          const history = p.foDateHistory || [];
+          updates.foDateHistory = [...history, p.foDate];
+        }
+        return { ...p, ...updates };
+      }
+      return p;
+    });
+
+    await persistData({ projects: updatedProjects });
     setSelectedProject(null);
   };
 
@@ -547,23 +624,17 @@ function Dashboard() {
       if (inputPassword === storedPassword || inputPassword === MASTER_PASSWORD || inputPassword.toUpperCase() === MASTER_PASSWORD) {
         showConfirm('최종 확인', '정말로 이 프로젝트와 관련된 모든 데이터를 삭제하시겠습니까?', async () => {
           try {
-            // Delete related data first
-            const partsQ = query(collection(db, 'processParts'), where('projectId', '==', id));
-            const partsSnap = await getDocs(partsQ);
-            const partsDeletes = partsSnap.docs.map(d => deleteDoc(doc(db, 'processParts', d.id)));
-            
-            const tasksQ = query(collection(db, 'tasks'), where('projectId', '==', id));
-            const tasksSnap = await getDocs(tasksQ);
-            const tasksDeletes = tasksSnap.docs.map(d => deleteDoc(doc(db, 'tasks', d.id)));
-            
-            const processesQ = query(collection(db, 'processes'), where('projectId', '==', id));
-            const processesSnap = await getDocs(processesQ);
-            const processesDeletes = processesSnap.docs.map(d => deleteDoc(doc(db, 'processes', d.id)));
+            const updatedProjects = projects.filter(p => p.id !== id);
+            const updatedProcesses = processes.filter(p => p.projectId !== id);
+            const updatedTasks = tasks.filter(t => t.projectId !== id);
+            const updatedParts = processParts.filter(p => p.projectId !== id);
 
-            await Promise.all([...partsDeletes, ...tasksDeletes, ...processesDeletes]);
-            
-            // Delete project
-            await deleteDoc(doc(db, 'projects', id));
+            await persistData({ 
+              projects: updatedProjects, 
+              processes: updatedProcesses, 
+              tasks: updatedTasks, 
+              processParts: updatedParts 
+            });
             showAlert('삭제 완료', '프로젝트가 성공적으로 삭제되었습니다.', 'success');
           } catch (error) {
             console.error(error);
@@ -578,68 +649,78 @@ function Dashboard() {
 
   const handleMoveProject = async (id: string, direction: 'up' | 'down') => {
     const index = projects.findIndex(p => p.id === id);
+    const newProjects = [...projects];
     if (direction === 'up' && index > 0) {
-      const prev = projects[index - 1];
-      const curr = projects[index];
+      const prev = newProjects[index - 1];
+      const curr = newProjects[index];
       const tempOrder = prev.sortOrder;
-      await updateDoc(doc(db, 'projects', prev.id), { sortOrder: curr.sortOrder });
-      await updateDoc(doc(db, 'projects', curr.id), { sortOrder: tempOrder });
+      prev.sortOrder = curr.sortOrder;
+      curr.sortOrder = tempOrder;
+      newProjects[index - 1] = curr;
+      newProjects[index] = prev;
     } else if (direction === 'down' && index < projects.length - 1) {
-      const next = projects[index + 1];
-      const curr = projects[index];
+      const next = newProjects[index + 1];
+      const curr = newProjects[index];
       const tempOrder = next.sortOrder;
-      await updateDoc(doc(db, 'projects', next.id), { sortOrder: curr.sortOrder });
-      await updateDoc(doc(db, 'projects', curr.id), { sortOrder: tempOrder });
+      next.sortOrder = curr.sortOrder;
+      curr.sortOrder = tempOrder;
+      newProjects[index + 1] = curr;
+      newProjects[index] = next;
     }
+    await persistData({ projects: newProjects });
   };
 
   const handleUpdateProcessDate = async (processId: string, date: string) => {
-    const proc = processes.find(p => p.id === processId);
-    if (!proc) return;
-    
-    const history = proc.targetDateHistory || [];
-    if (proc.targetDate.split('T')[0] !== date.split('T')[0]) {
-      const newHistory = [...history, proc.targetDate];
-      await updateDoc(doc(db, 'processes', processId), { 
-        targetDate: date,
-        targetDateHistory: newHistory
-      });
-    }
+    const updatedProcesses = processes.map(proc => {
+      if (proc.id === processId) {
+        const history = proc.targetDateHistory || [];
+        if (proc.targetDate.split('T')[0] !== date.split('T')[0]) {
+          const newHistory = [...history, proc.targetDate];
+          return { ...proc, targetDate: date, targetDateHistory: newHistory };
+        }
+      }
+      return proc;
+    });
+    await persistData({ processes: updatedProcesses });
   };
 
   const handleAddTask = async (projectId: string, processName: string, type: string, description: string) => {
-    await addDoc(collection(db, 'tasks'), {
+    const newTask: Task = {
+      id: Date.now().toString(),
       projectId,
       processName,
       type,
       description,
       status: 'pending'
-    });
-    updateProcessProgress(projectId, processName);
+    };
+    const updatedTasks = [...tasks, newTask];
+    const updatedProcesses = getUpdatedProcessesProgress(projectId, processName, processParts, updatedTasks, processes);
+    await persistData({ tasks: updatedTasks, processes: updatedProcesses });
   };
 
   const handleUpdateTaskStatus = async (taskId: string, status: TaskStatus, projectId: string, processName: string) => {
-    const updateData: any = { status };
-    if (status === 'completed') {
-      updateData.completedAt = new Date().toISOString();
-      updateData.initials = userInitials || null;
-    } else {
-      updateData.completedAt = null;
-      updateData.initials = null;
-    }
-    const sanitizedData = Object.fromEntries(
-      Object.entries(updateData).filter(([_, v]) => v !== undefined)
-    );
-    await updateDoc(doc(db, 'tasks', taskId), sanitizedData);
-    updateProcessProgress(projectId, processName);
+    const updatedTasks = tasks.map(t => {
+      if (t.id === taskId) {
+        const updateData: any = { status };
+        if (status === 'completed') {
+          updateData.completedAt = new Date().toISOString();
+          updateData.initials = userInitials || null;
+        } else {
+          updateData.completedAt = null;
+          updateData.initials = null;
+        }
+        return { ...t, ...updateData };
+      }
+      return t;
+    });
+    const updatedProcesses = getUpdatedProcessesProgress(projectId, processName, processParts, updatedTasks, processes);
+    await persistData({ tasks: updatedTasks, processes: updatedProcesses });
   };
 
   const handleUpdateTask = async (taskId: string, data: Partial<Task>, projectId: string, processName: string) => {
-    const sanitizedData = Object.fromEntries(
-      Object.entries(data).filter(([_, v]) => v !== undefined)
-    );
-    await updateDoc(doc(db, 'tasks', taskId), sanitizedData);
-    updateProcessProgress(projectId, processName);
+    const updatedTasks = tasks.map(t => t.id === taskId ? { ...t, ...data } : t);
+    const updatedProcesses = getUpdatedProcessesProgress(projectId, processName, processParts, updatedTasks, processes);
+    await persistData({ tasks: updatedTasks, processes: updatedProcesses });
   };
 
   const handleUploadExcel = async (projectId: string, processName: string, file: File) => {
@@ -700,7 +781,6 @@ function Dashboard() {
           }
         }
 
-        // If no clear header found, use the first non-empty row
         if (headerRowIndex === -1 || maxMatches === 0) {
           for (let i = 0; i < jsonData.length; i++) {
             if (jsonData[i] && jsonData[i].some(cell => cell !== "")) {
@@ -717,7 +797,6 @@ function Dashboard() {
         
         rawHeaders.forEach((h, idx) => {
           const s = String(h).toUpperCase().replace(/\s/g, '');
-          // Filter out columns that the app handles manually
           if (!s.includes('완료') && !s.includes('DELAY') && h) {
             headers.push(h);
             headerIndices.push(idx);
@@ -726,7 +805,6 @@ function Dashboard() {
 
         const dataRows = jsonData.slice(headerRowIndex + 1);
         
-        // Try to find a title row (first non-empty row before header)
         let excelTitle = "";
         for (let i = 0; i < headerRowIndex; i++) {
           const row = jsonData[i];
@@ -736,17 +814,13 @@ function Dashboard() {
           }
         }
 
-        // Update process headers and title
-        const procQuery = query(collection(db, 'processes'), where('projectId', '==', projectId), where('name', '==', processName));
-        const procSnapshot = await getDocs(procQuery);
-        if (!procSnapshot.empty) {
-          await updateDoc(doc(db, 'processes', procSnapshot.docs[0].id), { 
-            headers,
-            excelTitle: excelTitle || null 
-          });
-        }
+        const updatedProcesses = processes.map(proc => {
+          if (proc.projectId === projectId && proc.name === processName) {
+            return { ...proc, headers, excelTitle: excelTitle || null };
+          }
+          return proc;
+        });
 
-        // Map columns for internal fields (moldNo, drwNo, etc.) using original indices
         const findRawIdx = (keys: string[]) => rawHeaders.findIndex(h => {
           const s = String(h).toUpperCase().replace(/\s/g, '');
           return keys.some(k => {
@@ -760,39 +834,34 @@ function Dashboard() {
         const nameIdx = findRawIdx(['품명', '부품', 'PART', 'NAME']);
         const sIdx = findRawIdx(['S', '작업', '상태']);
 
-        // Use writeBatch for efficiency
-        const BATCH_SIZE = 400;
-        for (let i = 0; i < dataRows.length; i += BATCH_SIZE) {
-          const batch = writeBatch(db);
-          const chunk = dataRows.slice(i, i + BATCH_SIZE);
+        const newParts: ProcessPart[] = [];
+        dataRows.forEach((row, idx) => {
+          if (row.every(cell => !cell)) return;
           
-          chunk.forEach((row, idx) => {
-            if (row.every(cell => !cell)) return;
-            
-            const defaultLocation = ['사출', '인쇄', '메탈'].includes(processName) ? '서울' : '대천';
-            
-            const docRef = doc(collection(db, 'processParts'));
-            batch.set(docRef, {
-              projectId,
-              processName,
-              moldNo: moldIdx !== -1 && row[moldIdx] ? String(row[moldIdx]) : (row[0] ? String(row[0]) : ''),
-              drwNo: drwIdx !== -1 && row[drwIdx] ? String(row[drwIdx]) : (row[1] ? String(row[1]) : ''),
-              s: sIdx !== -1 && row[sIdx] ? String(row[sIdx]) : (row[2] ? String(row[2]) : ''),
-              partsName: nameIdx !== -1 && row[nameIdx] ? String(row[nameIdx]) : (row[3] ? String(row[3]) : ''),
-              productionLocation: defaultLocation,
-              plannedAt: null,
-              completedAt: null,
-              delayReason: '',
-              delayType: '',
-              order: i + idx,
-              rawData: headerIndices.map(hIdx => row[hIdx])
-            });
+          const defaultLocation = ['사출', '인쇄', '메탈'].includes(processName) ? '서울' : '대천';
+          
+          newParts.push({
+            id: (Date.now() + Math.random()).toString(),
+            projectId,
+            processName,
+            moldNo: moldIdx !== -1 && row[moldIdx] ? String(row[moldIdx]) : (row[0] ? String(row[0]) : ''),
+            drwNo: drwIdx !== -1 && row[drwIdx] ? String(row[drwIdx]) : (row[1] ? String(row[1]) : ''),
+            s: sIdx !== -1 && row[sIdx] ? String(row[sIdx]) : (row[2] ? String(row[2]) : ''),
+            partsName: nameIdx !== -1 && row[nameIdx] ? String(row[nameIdx]) : (row[3] ? String(row[3]) : ''),
+            productionLocation: defaultLocation,
+            plannedAt: null,
+            completedAt: null,
+            delayReason: '',
+            delayType: '',
+            order: idx,
+            rawData: headerIndices.map(hIdx => row[hIdx])
           });
-          
-          await batch.commit();
-        }
+        });
 
-        updateProcessProgress(projectId, processName);
+        const updatedParts = [...processParts.filter(p => !(p.projectId === projectId && p.processName === processName)), ...newParts];
+        const finalProcesses = getUpdatedProcessesProgress(projectId, processName, updatedParts, tasks, updatedProcesses);
+        
+        await persistData({ processParts: updatedParts, processes: finalProcesses });
         showAlert('업로드 완료', `${dataRows.length}개의 부품 데이터가 업로드되었습니다.`, 'success');
       } catch (error) {
         console.error('Excel upload error:', error);
@@ -805,25 +874,26 @@ function Dashboard() {
   const handleBatchUpdateParts = async (updates: { id: string, data: Partial<ProcessPart> }[], projectId: string, processName: string) => {
     const project = projects.find(p => p.id === projectId);
     if (project?.status === 'completed') return;
-    for (const update of updates) {
-      // Sanitize data to remove undefined values
-      const sanitizedData = Object.fromEntries(
-        Object.entries(update.data).filter(([_, v]) => v !== undefined)
-      );
-      await updateDoc(doc(db, 'processParts', update.id), sanitizedData);
-    }
-    updateProcessProgress(projectId, processName);
+    
+    const updatedParts = processParts.map(p => {
+      const update = updates.find(u => u.id === p.id);
+      if (update) {
+        return { ...p, ...update.data };
+      }
+      return p;
+    });
+    
+    const updatedProcesses = getUpdatedProcessesProgress(projectId, processName, updatedParts, tasks, processes);
+    await persistData({ processParts: updatedParts, processes: updatedProcesses });
   };
 
   const handleUpdatePart = async (partId: string, data: Partial<ProcessPart>, projectId: string, processName: string) => {
     const project = projects.find(p => p.id === projectId);
     if (project?.status === 'completed') return;
-    // Sanitize data to remove undefined values
-    const sanitizedData = Object.fromEntries(
-      Object.entries(data).filter(([_, v]) => v !== undefined)
-    );
-    await updateDoc(doc(db, 'processParts', partId), sanitizedData);
-    updateProcessProgress(projectId, processName);
+    
+    const updatedParts = processParts.map(p => p.id === partId ? { ...p, ...data } : p);
+    const updatedProcesses = getUpdatedProcessesProgress(projectId, processName, updatedParts, tasks, processes);
+    await persistData({ processParts: updatedParts, processes: updatedProcesses });
   };
 
   const handleAddPart = async (projectId: string, processName: string, data: Partial<ProcessPart>) => {
@@ -835,7 +905,8 @@ function Dashboard() {
 
     const defaultLocation = ['사출', '인쇄', '메탈'].includes(processName) ? '서울' : '대천';
 
-    await addDoc(collection(db, 'processParts'), {
+    const newPart: ProcessPart = {
+      id: Date.now().toString(),
       projectId,
       processName,
       moldNo: data.moldNo || '',
@@ -848,52 +919,52 @@ function Dashboard() {
       delayType: '',
       order: maxOrder + 1,
       ...data
-    });
-    updateProcessProgress(projectId, processName);
+    } as ProcessPart;
+
+    const updatedParts = [...processParts, newPart];
+    const updatedProcesses = getUpdatedProcessesProgress(projectId, processName, updatedParts, tasks, processes);
+    await persistData({ processParts: updatedParts, processes: updatedProcesses });
   };
 
   const handleDeletePart = async (partId: string, projectId: string, processName: string) => {
     const project = projects.find(p => p.id === projectId);
     if (project?.status === 'completed') return;
-    await deleteDoc(doc(db, 'processParts', partId));
-    updateProcessProgress(projectId, processName);
+    const updatedParts = processParts.filter(p => p.id !== partId);
+    const updatedProcesses = getUpdatedProcessesProgress(projectId, processName, updatedParts, tasks, processes);
+    await persistData({ processParts: updatedParts, processes: updatedProcesses });
   };
 
   const handleDeleteParts = async (projectId: string, processName: string) => {
     const project = projects.find(p => p.id === projectId);
     if (project?.status === 'completed') return;
-    // 1. Delete processParts
-    const partsQ = query(collection(db, 'processParts'), where('projectId', '==', projectId), where('processName', '==', processName));
-    const partsSnapshot = await getDocs(partsQ);
-    const partsDeletePromises = partsSnapshot.docs.map(docSnap => deleteDoc(doc(db, 'processParts', docSnap.id)));
     
-    // 2. Delete tasks
-    const tasksQ = query(collection(db, 'tasks'), where('projectId', '==', projectId), where('processName', '==', processName));
-    const tasksSnapshot = await getDocs(tasksQ);
-    const tasksDeletePromises = tasksSnapshot.docs.map(docSnap => deleteDoc(doc(db, 'tasks', docSnap.id)));
+    const updatedParts = processParts.filter(p => !(p.projectId === projectId && p.processName === processName));
+    const updatedTasks = tasks.filter(t => !(t.projectId === projectId && t.processName === processName));
+    const updatedProcesses = processes.map(proc => {
+      if (proc.projectId === projectId && proc.name === processName) {
+        return { 
+          ...proc, 
+          progress: 0,
+          headers: [],
+          excelTitle: null,
+          targetDate: '',
+          targetDateHistory: []
+        };
+      }
+      return proc;
+    });
     
-    await Promise.all([...partsDeletePromises, ...tasksDeletePromises]);
-    
-    // 3. Reset process data (progress, headers, excelTitle, targetDate, targetDateHistory)
-    const procQuery = query(collection(db, 'processes'), where('projectId', '==', projectId), where('name', '==', processName));
-    const procSnapshot = await getDocs(procQuery);
-    if (!procSnapshot.empty) {
-      await updateDoc(doc(db, 'processes', procSnapshot.docs[0].id), { 
-        progress: 0,
-        headers: [],
-        excelTitle: null,
-        targetDate: '',
-        targetDateHistory: []
-      });
-    }
+    await persistData({ processParts: updatedParts, tasks: updatedTasks, processes: updatedProcesses });
   };
 
   const handleCompleteProject = async (projectId: string) => {
     showConfirm('생산 완료', '이 프로젝트를 생산 완료 처리하시겠습니까?', async () => {
-      await updateDoc(doc(db, 'projects', projectId), {
-        status: 'completed',
+      const updatedProjects = projects.map(p => p.id === projectId ? {
+        ...p,
+        status: 'completed' as const,
         completedAt: new Date().toISOString()
-      });
+      } : p);
+      await persistData({ projects: updatedProjects });
       showAlert('완료 처리', '프로젝트가 생산 완료 목록으로 이동되었습니다.', 'success');
     });
   };
@@ -954,31 +1025,34 @@ function Dashboard() {
     XLSX.writeFile(wb, `${project.model}_생산현황_${format(new Date(), 'yyyyMMdd')}.xlsx`);
   };
 
-  const updateProcessProgress = async (projectId: string, processName: string) => {
-    const partsQ = query(collection(db, 'processParts'), where('projectId', '==', projectId), where('processName', '==', processName));
-    const partsSnapshot = await getDocs(partsQ);
-    const parts = partsSnapshot.docs.map(doc => doc.data() as ProcessPart);
-    
-    const tasksQ = query(collection(db, 'tasks'), where('projectId', '==', projectId), where('processName', '==', processName));
-    const tasksSnapshot = await getDocs(tasksQ);
-    const tasks = tasksSnapshot.docs.map(doc => doc.data() as Task);
+  const getUpdatedProcessesProgress = (projectId: string, processName: string, currentParts: ProcessPart[], currentTasks: Task[], currentProcesses: Process[]) => {
+    const parts = currentParts.filter(p => p.projectId === projectId && p.processName === processName);
+    const tasks = currentTasks.filter(t => t.projectId === projectId && t.processName === processName);
     
     const totalItems = parts.length + tasks.length;
-    if (totalItems === 0) return;
+    if (totalItems === 0) {
+      return currentProcesses.map(proc => {
+        if (proc.projectId === projectId && proc.name === processName) {
+          return { ...proc, progress: 0 };
+        }
+        return proc;
+      });
+    }
 
     const completedParts = parts.filter(p => p.completedAt).length;
     const completedTasks = tasks.filter(t => t.status === 'completed').length;
     const progress = Math.round(((completedParts + completedTasks) / totalItems) * 100);
 
-    const procQuery = query(collection(db, 'processes'), where('projectId', '==', projectId), where('name', '==', processName));
-    const procSnapshot = await getDocs(procQuery);
-    if (!procSnapshot.empty) {
-      await updateDoc(doc(db, 'processes', procSnapshot.docs[0].id), { progress });
-    }
+    return currentProcesses.map(proc => {
+      if (proc.projectId === projectId && proc.name === processName) {
+        return { ...proc, progress };
+      }
+      return proc;
+    });
   };
 
   if (!userInitials) {
-    return <Auth onLogin={(initials) => setUserInitials(initials)} />;
+    return <Auth users={users} onLogin={(initials) => setUserInitials(initials)} />;
   }
 
   const today = new Date();
@@ -1217,7 +1291,12 @@ function Dashboard() {
       {/* Modals */}
       <AnimatePresence>
         {isSettingsOpen && (
-          <SettingsModal onClose={() => setIsSettingsOpen(false)} showConfirm={showConfirm} />
+          <SettingsModal 
+            users={users} 
+            persistData={persistData} 
+            onClose={() => setIsSettingsOpen(false)} 
+            showConfirm={showConfirm} 
+          />
         )}
         {isProjectModalOpen && (
           <ProjectModal 
