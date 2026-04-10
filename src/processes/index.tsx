@@ -91,7 +91,7 @@ const ProcessTable = ({
   showConfirm: (title: string, message: string, onConfirm: () => void) => void;
   showPasswordPrompt: (title: string, message: string, onConfirm: (password: string) => void) => void;
 }) => {
-  const DELAY_TYPES = ['금형수리', '사출불량', '인쇄불량', '재작업', '금형파손', '기타'];
+  const DELAY_TYPES = ['금형수리', '사출불량', 'ETCHING불량', '재작업', '금형파손', '기타'];
   const [localParts, setLocalParts] = React.useState<ProcessPart[]>([]);
   const [isSaving, setIsSaving] = React.useState(false);
 
@@ -182,14 +182,14 @@ const ProcessTable = ({
     drwNo: '',
     s: '',
     partsName: '',
-    productionLocation: ['INJECTION', 'ETCHING', 'METAL'].includes(processName) ? '서울' : '대천',
+    productionLocation: ['사출', 'ETCHING', '메탈'].includes(processName) ? '서울' : '대천',
     plannedAt: ''
   });
 
   React.useEffect(() => {
     setNewPart(prev => ({
       ...prev,
-      productionLocation: ['INJECTION', 'ETCHING', 'METAL'].includes(processName) ? '서울' : '대천'
+      productionLocation: ['사출', 'ETCHING', '메탈'].includes(processName) ? '서울' : '대천'
     }));
   }, [processName]);
 
@@ -208,7 +208,7 @@ const ProcessTable = ({
       drwNo: '',
       s: '',
       partsName: '',
-      productionLocation: ['사출', '인쇄', '메탈'].includes(processName) ? '서울' : '대천',
+      productionLocation: ['사출', 'ETCHING', '메탈'].includes(processName) ? '서울' : '대천',
       plannedAt: ''
     });
   };
@@ -434,7 +434,7 @@ const ProcessTable = ({
                           className="border-r border-slate-900 border-t-2 border-t-slate-900 border-b-2 border-b-slate-900 p-1.5 text-center align-middle bg-white"
                         >
                           <select
-                            value={part.productionLocation || (['INJECTION', 'ETCHING', 'METAL'].includes(processName) ? '서울' : '대천')}
+                            value={part.productionLocation || (['사출', 'ETCHING', '메탈'].includes(processName) ? '서울' : '대천')}
                             onChange={(e) => handleUpdateGroupLocal(group.parts, { productionLocation: e.target.value })}
                             disabled={isReadOnly}
                             className="w-full bg-transparent border-none text-center font-bold outline-none focus:bg-sky-100 text-xs cursor-pointer"
@@ -719,11 +719,11 @@ const ProcessBase = ({ name, projectId, processParts, headers, excelTitle, isRea
   );
 };
 
-export const Injection = (props: ProcessProps) => <ProcessBase name="INJECTION" colorClass="bg-sky-50/50" {...props} />;
+export const Injection = (props: ProcessProps) => <ProcessBase name="사출" colorClass="bg-sky-50/50" {...props} />;
 export const Printing = (props: ProcessProps) => <ProcessBase name="ETCHING" colorClass="bg-indigo-50/50" {...props} />;
-export const Metal = (props: ProcessProps) => <ProcessBase name="METAL" colorClass="bg-slate-100/50" {...props} />;
+export const Metal = (props: ProcessProps) => <ProcessBase name="메탈" colorClass="bg-slate-100/50" {...props} />;
 export const Paint = (props: ProcessProps) => <ProcessBase name="PAINT" colorClass="bg-rose-50/50" {...props} />;
 export const Print = (props: ProcessProps) => <ProcessBase name="PRINT" colorClass="bg-orange-50/50" {...props} />;
-export const Processing = (props: ProcessProps) => <ProcessBase name="PRESS" colorClass="bg-emerald-50/50" {...props} />;
-export const Assembly = (props: ProcessProps) => <ProcessBase name="ASSEMBLY" colorClass="bg-amber-50/50" {...props} />;
-export const Packaging = (props: ProcessProps) => <ProcessBase name="PACKING" colorClass="bg-teal-50/50" {...props} />;
+export const Processing = (props: ProcessProps) => <ProcessBase name="가공" colorClass="bg-emerald-50/50" {...props} />;
+export const Assembly = (props: ProcessProps) => <ProcessBase name="조립" colorClass="bg-amber-50/50" {...props} />;
+export const Packaging = (props: ProcessProps) => <ProcessBase name="포장" colorClass="bg-teal-50/50" {...props} />;
