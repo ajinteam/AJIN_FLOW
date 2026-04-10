@@ -3,7 +3,7 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
-import redis from "./src/lib/redis.js"; // Note: .js extension for ESM if needed, or just ./src/lib/redis
+import redis from "./src/lib/redis.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,6 +15,11 @@ async function startServer() {
   const PORT = 3000;
 
   app.use(express.json({ limit: '50mb' }));
+
+  // Health check
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", env: process.env.NODE_ENV });
+  });
 
   // API routes
   app.get("/api/data", async (req, res) => {
@@ -84,6 +89,8 @@ async function startServer() {
   });
 
   // Vite middleware for development
+  console.log(`Running in ${process.env.NODE_ENV || 'development'} mode`);
+
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },

@@ -383,7 +383,11 @@ export default function App() {
       const res = await fetch('/api/data');
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error || `Server error: ${res.status}`);
+        let msg = errorData.error || `Server error: ${res.status}`;
+        if (res.status === 404) {
+          msg = "서버 연결 오류 (404): API 경로를 찾을 수 없습니다. 관리자에게 문의하세요.";
+        }
+        throw new Error(msg);
       }
       const json = await res.json();
       const sanitizedData = {
