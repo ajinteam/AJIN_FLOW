@@ -182,14 +182,14 @@ const ProcessTable = ({
     drwNo: '',
     s: '',
     partsName: '',
-    productionLocation: ['사출', '인쇄', '메탈'].includes(processName) ? '서울' : '대천',
+    productionLocation: ['사출', 'ETCHING', '메탈'].includes(processName) ? '서울' : '대천',
     plannedAt: ''
   });
 
   React.useEffect(() => {
     setNewPart(prev => ({
       ...prev,
-      productionLocation: ['사출', '인쇄', '메탈'].includes(processName) ? '서울' : '대천'
+      productionLocation: ['사출', 'ETCHING', '메탈'].includes(processName) ? '서울' : '대천'
     }));
   }, [processName]);
 
@@ -208,7 +208,7 @@ const ProcessTable = ({
       drwNo: '',
       s: '',
       partsName: '',
-      productionLocation: ['사출', '인쇄', '메탈'].includes(processName) ? '서울' : '대천',
+      productionLocation: ['사출', 'ETCHING', '메탈'].includes(processName) ? '서울' : '대천',
       plannedAt: ''
     });
   };
@@ -434,7 +434,7 @@ const ProcessTable = ({
                           className="border-r border-slate-900 border-t-2 border-t-slate-900 border-b-2 border-b-slate-900 p-1.5 text-center align-middle bg-white"
                         >
                           <select
-                            value={part.productionLocation || (['사출', '인쇄', '메탈'].includes(processName) ? '서울' : '대천')}
+                            value={part.productionLocation || (['사출', 'ETCHING', '메탈'].includes(processName) ? '서울' : '대천')}
                             onChange={(e) => handleUpdateGroupLocal(group.parts, { productionLocation: e.target.value })}
                             disabled={isReadOnly}
                             className="w-full bg-transparent border-none text-center font-bold outline-none focus:bg-sky-100 text-xs cursor-pointer"
@@ -720,7 +720,7 @@ const ProcessBase = ({ name, projectId, processParts, headers, excelTitle, isRea
 };
 
 export const Injection = (props: ProcessProps) => <ProcessBase name="사출" colorClass="bg-sky-50/50" {...props} />;
-export const Printing = (props: ProcessProps) => <ProcessBase name="인쇄" colorClass="bg-indigo-50/50" {...props} />;
+export const Printing = (props: ProcessProps) => <ProcessBase name="ETCHING" colorClass="bg-indigo-50/50" {...props} />;
 export const Metal = (props: ProcessProps) => <ProcessBase name="메탈" colorClass="bg-slate-100/50" {...props} />;
 export const Paint = (props: ProcessProps) => <ProcessBase name="PAINT" colorClass="bg-rose-50/50" {...props} />;
 export const Print = (props: ProcessProps) => <ProcessBase name="PRINT" colorClass="bg-orange-50/50" {...props} />;

@@ -44,7 +44,7 @@ function handleRedisError(error: unknown, operationType: OperationType, path: st
 
 const PROCESS_COLORS: Record<ProcessName, string> = {
   '사출': 'bg-sky-50/50',
-  '인쇄': 'bg-indigo-50/50',
+  'ETCHING': 'bg-indigo-50/50',
   '메탈': 'bg-slate-100/50',
   'PAINT': 'bg-rose-50/50',
   'PRINT': 'bg-orange-50/50',
@@ -842,7 +842,7 @@ function Dashboard({ initialData, persistData, refreshData }: {
         dataRows.forEach((row, idx) => {
           if (row.every(cell => !cell)) return;
           
-          const defaultLocation = ['사출', '인쇄', '메탈'].includes(processName) ? '서울' : '대천';
+          const defaultLocation = ['사출', 'ETCHING', '메탈'].includes(processName) ? '서울' : '대천';
           
           newParts.push({
             id: (Date.now() + Math.random()).toString(),
@@ -907,7 +907,7 @@ function Dashboard({ initialData, persistData, refreshData }: {
       .filter(p => p.projectId === projectId && p.processName === processName)
       .reduce((max, p) => Math.max(max, p.order || 0), 0);
 
-    const defaultLocation = ['사출', '인쇄', '메탈'].includes(processName) ? '서울' : '대천';
+    const defaultLocation = ['사출', 'ETCHING', '메탈'].includes(processName) ? '서울' : '대천';
 
     const newPart: ProcessPart = {
       id: Date.now().toString(),
@@ -1573,7 +1573,7 @@ const ProcessModal = ({ projectId, processName, tasks, processParts, processes, 
   const ProcessComponent = (() => {
     switch (processName) {
       case '사출': return Processes.Injection;
-      case '인쇄': return Processes.Printing;
+      case 'ETCHING': return Processes.Printing;
       case '메탈': return Processes.Metal;
       case 'PAINT': return Processes.Paint;
       case 'PRINT': return Processes.Print;

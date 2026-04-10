@@ -79,7 +79,7 @@ export interface PackagingPart extends ProcessPart {}
 
 export const PROCESS_LIST = [
   '사출',
-  '인쇄',
+  'ETCHING',
   '메탈',
   'PAINT',
   'PRINT',
