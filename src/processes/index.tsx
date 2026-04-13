@@ -247,7 +247,7 @@ const ProcessTable = ({
       case '대천': return 'bg-blue-100/50';
       case '서울': return 'bg-emerald-100/50';
       case '베트남': return 'bg-amber-100/50';
-      case '가내': return 'bg-purple-100/50';
+      case '가내': return 'bg-pink-100/50';
       default: return 'bg-white';
     }
   };
