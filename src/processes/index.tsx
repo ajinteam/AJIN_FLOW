@@ -242,6 +242,16 @@ const ProcessTable = ({
     return { text: '0', color: 'text-slate-900' };
   };
 
+  const getLocationColor = (location: string) => {
+    switch (location) {
+      case '대천': return 'bg-blue-100/50';
+      case '서울': return 'bg-emerald-100/50';
+      case '베트남': return 'bg-amber-100/50';
+      case '가내': return 'bg-purple-100/50';
+      default: return 'bg-white';
+    }
+  };
+
   const groups = React.useMemo(() => {
     const result: { moldNo: string; parts: ProcessPart[] }[] = [];
     let currentGroup: { moldNo: string; parts: ProcessPart[] } | null = null;
@@ -431,7 +441,10 @@ const ProcessTable = ({
                       <>
                         <td 
                           rowSpan={group.parts.length} 
-                          className="border-r border-slate-900 border-t-2 border-t-slate-900 border-b-2 border-b-slate-900 p-1.5 text-center align-middle bg-white"
+                          className={cn(
+                            "border-r border-slate-900 border-t-2 border-t-slate-900 border-b-2 border-b-slate-900 p-1.5 text-center align-middle transition-colors",
+                            getLocationColor(part.productionLocation || (['사출', '인쇄', '메탈'].includes(processName) ? '서울' : '대천'))
+                          )}
                         >
                           <select
                             value={part.productionLocation || (['사출', '인쇄', '메탈'].includes(processName) ? '서울' : '대천')}
@@ -442,6 +455,7 @@ const ProcessTable = ({
                             <option value="대천">대천</option>
                             <option value="서울">서울</option>
                             <option value="베트남">베트남</option>
+                            <option value="가내">가내</option>
                           </select>
                         </td>
                         <td 
@@ -590,15 +604,19 @@ const ProcessTable = ({
                   </td>
                 </>
               )}
-              <td className="border-r border-slate-900 p-1.5">
+              <td className={cn(
+                "border-r border-slate-900 p-1.5 transition-colors",
+                getLocationColor(newPart.productionLocation)
+              )}>
                 <select
                   value={newPart.productionLocation}
                   onChange={(e) => setNewPart(prev => ({ ...prev, productionLocation: e.target.value }))}
-                  className="w-full bg-white/80 border border-sky-200 rounded px-2 py-1 text-center font-bold outline-none focus:ring-2 focus:ring-sky-400 text-xs"
+                  className="w-full bg-transparent border-none text-center font-bold outline-none focus:ring-2 focus:ring-sky-400 text-xs"
                 >
                   <option value="대천">대천</option>
                   <option value="서울">서울</option>
                   <option value="베트남">베트남</option>
+                  <option value="가내">가내</option>
                 </select>
               </td>
               <td className="border-r border-slate-900 p-1.5">
