@@ -91,7 +91,7 @@ const ProcessTable = ({
   showConfirm: (title: string, message: string, onConfirm: () => void) => void;
   showPasswordPrompt: (title: string, message: string, onConfirm: (password: string) => void) => void;
 }) => {
-  const DELAY_TYPES = ['금형수리', '사출불량', '인쇄불량', '재작업', '금형파손', '기타'];
+  const DELAY_TYPES = ['금형수리', '사출불량', '인쇄불량', '재작업', '금형파손', '부품공급지연', '부품불량',  '기타'];
   const [localParts, setLocalParts] = React.useState<ProcessPart[]>([]);
   const [isSaving, setIsSaving] = React.useState(false);
 
@@ -306,7 +306,7 @@ const ProcessTable = ({
                   <th className="border-r border-slate-900 p-1.5 w-[34.5%] text-center">PART NAME</th>
                 </>
               )}
-              <th className="border-r border-slate-900 p-1.5 w-[6%] text-center">생산</th>
+              <th className="border-r border-slate-900 p-1.5 w-[6%] text-center">작업처</th>
               <th className="border-r border-slate-900 p-1.5 w-[10%] text-center">내계획</th>
               <th className="border-r border-slate-900 p-1.5 w-[12%] text-center">완료</th>
               <th className="border-r border-slate-900 p-1.5 w-[6%] text-center">지연(일)</th>

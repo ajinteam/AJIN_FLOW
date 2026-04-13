@@ -1484,7 +1484,7 @@ const ProjectModal = ({ project, onClose, onSubmit }: {
       >
         <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
           <h3 className="font-bold text-slate-800">{project ? '프로젝트 수정' : '새 프로젝트 생성'}</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">×</button>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">닫기</button>
         </div>
         <div className="p-6 space-y-4">
           <div>
@@ -1601,7 +1601,7 @@ const ProcessModal = ({ projectId, processName, tasks, processParts, processes, 
             <h3 className="font-bold text-slate-800 text-xl">{processName} 공정 상세</h3>
             <span className="bg-blue-100 text-blue-600 px-2 py-0.5 rounded text-base font-bold">{progress}%</span>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-2xl">×</button>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-2xl">닫기</button>
         </div>
         
         <div className="p-6 overflow-y-auto flex-1">
