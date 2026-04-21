@@ -91,7 +91,7 @@ const ProcessTable = ({
   showConfirm: (title: string, message: string, onConfirm: () => void) => void;
   showPasswordPrompt: (title: string, message: string, onConfirm: (password: string) => void) => void;
 }) => {
-  const DELAY_TYPES = ['금형수리', '사출불량', '인쇄불량', '재작업', '금형파손', '부품공급지연', '부품불량',  '기타'];
+  const DELAY_TYPES = ['금형수리', '사출불량', '인쇄불량', '재작업', '금형파손', '부품공급지연', '부품불량', '원재료', '재고', '기타'];
   const [localParts, setLocalParts] = React.useState<ProcessPart[]>([]);
   const [isSaving, setIsSaving] = React.useState(false);
 
