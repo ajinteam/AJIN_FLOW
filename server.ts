@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 import redis from "./src/lib/redis.ts";
 
@@ -14,11 +15,56 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  // Increase payload limit to 50MB for file uploads
   app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+  // Ensure uploads directory exists
+  const uploadsDir = path.join(process.cwd(), 'uploads');
+  if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  }
+
+  // Serve uploaded files statically
+  app.use('/uploads', express.static(uploadsDir));
 
   // Health check
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", env: process.env.NODE_ENV });
+  });
+
+  // Dedicated File Upload Endpoint
+  app.post("/api/upload-file", async (req, res) => {
+    try {
+      const { filename, base64 } = req.body;
+      if (!filename || !base64) {
+        return res.status(400).json({ error: "Filename and base64 content required" });
+      }
+
+      // Remove base64 data URL prefix if present
+      const cleanBase64 = base64.replace(/^data:.*?;base64,/, '');
+      const buffer = Buffer.from(cleanBase64, 'base64');
+
+      // Create a unique safe filename
+      const timestamp = Date.now();
+      const sanitizedName = filename.replace(/[^a-zA-Z0-9._가-힣-]/g, '_');
+      const savedFileName = `${timestamp}_${sanitizedName}`;
+      const filePath = path.join(uploadsDir, savedFileName);
+
+      await fs.promises.writeFile(filePath, buffer);
+
+      const fileUrl = `/uploads/${encodeURIComponent(savedFileName)}`;
+      res.json({
+        success: true,
+        url: fileUrl,
+        filename: savedFileName,
+        originalName: filename,
+        size: buffer.length
+      });
+    } catch (error: any) {
+      console.error("File upload error:", error);
+      res.status(500).json({ error: error.message || "Failed to upload file" });
+    }
   });
 
   // API routes

@@ -282,7 +282,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
     });
   };
 
-  // Upload files handler (PDF, Excel, Images with compression & overwrite)
+  // Upload files handler (PDF, Excel, Images with compression, server upload & overwrite)
   const handleUploadFiles = async (targetProjectId: string, files: File[]) => {
     const targetProj = infoProjects.find((p) => p.id === targetProjectId);
     if (!targetProj) {
@@ -296,24 +296,46 @@ export const InfoView: React.FC<InfoViewProps> = ({
       for (const file of files) {
         const ext = file.name.split('.').pop()?.toLowerCase() || '';
         let fileType: 'pdf' | 'excel' | 'image' | 'other' = 'other';
-        let dataUrl = '';
+        let rawBase64 = '';
         let fileSize = file.size;
         let parsedSheets: { name: string; data: any[][] }[] | undefined = undefined;
 
         if (ext === 'pdf') {
           fileType = 'pdf';
-          dataUrl = await readFileAsDataUrl(file);
+          rawBase64 = await readFileAsDataUrl(file);
         } else if (['xlsx', 'xls', 'csv'].includes(ext)) {
           fileType = 'excel';
-          dataUrl = await readFileAsDataUrl(file);
+          rawBase64 = await readFileAsDataUrl(file);
           parsedSheets = await parseExcelFile(file);
         } else if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'].includes(ext)) {
           fileType = 'image';
           const optimized = await optimizeImageFile(file);
-          dataUrl = optimized.dataUrl;
+          rawBase64 = optimized.dataUrl;
           fileSize = optimized.size;
         } else {
-          dataUrl = await readFileAsDataUrl(file);
+          rawBase64 = await readFileAsDataUrl(file);
+        }
+
+        // Upload to server endpoint to obtain a persistent static URL
+        let savedUrl = rawBase64;
+        try {
+          const uploadRes = await fetch('/api/upload-file', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              filename: file.name,
+              base64: rawBase64
+            })
+          });
+          if (uploadRes.ok) {
+            const uploadJson = await uploadRes.json();
+            if (uploadJson.url) {
+              savedUrl = uploadJson.url;
+              fileSize = uploadJson.size || fileSize;
+            }
+          }
+        } catch (uploadErr) {
+          console.warn('Server file upload failed, fallback to direct dataUrl:', uploadErr);
         }
 
         const newFileObj: InfoFile = {
@@ -321,7 +343,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
           name: file.name,
           type: fileType,
           size: fileSize,
-          dataUrl,
+          dataUrl: savedUrl,
           uploadedAt: new Date().toISOString(),
           parsedSheets
         };
@@ -346,7 +368,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
 
       showAlert('업로드 완료', `${files.length}개 파일이 성공적으로 등록되었습니다. (동일 이름 파일은 자동 덮어쓰기 적용)`, 'success');
     } catch (err: any) {
-      console.error(err);
+      console.error('File upload error:', err);
       showAlert('업로드 오류', err.message || '파일 처리 중 오류가 발생했습니다.', 'error');
     }
   };

@@ -476,14 +476,24 @@ class ErrorBoundary extends React.Component<any, any> {
   }
 }
 
+type AppData = {
+  users: UserConfig[];
+  projects: Project[];
+  processes: Process[];
+  tasks: Task[];
+  processParts: ProcessPart[];
+  infoProjects: InfoProject[];
+};
+
 // Main Dashboard
 export default function App() {
-  const [data, setData] = useState({
-    users: [] as UserConfig[],
-    projects: [] as Project[],
-    processes: [] as Process[],
-    tasks: [] as Task[],
-    processParts: [] as ProcessPart[]
+  const [data, setData] = useState<AppData>({
+    users: [],
+    projects: [],
+    processes: [],
+    tasks: [],
+    processParts: [],
+    infoProjects: []
   });
   const [loading, setLoading] = useState(true);
   const [globalError, setGlobalError] = useState<string | null>(null);
@@ -523,7 +533,7 @@ export default function App() {
   }, [fetchData]);
 
   const persistData = async (updates: any) => {
-    const newData = {
+    let targetData: AppData = {
       users: updates.users !== undefined ? updates.users : data.users,
       projects: updates.projects !== undefined ? updates.projects : data.projects,
       processes: updates.processes !== undefined ? updates.processes : data.processes,
@@ -531,21 +541,33 @@ export default function App() {
       processParts: updates.processParts !== undefined ? updates.processParts : data.processParts,
       infoProjects: updates.infoProjects !== undefined ? updates.infoProjects : (data.infoProjects || []),
     };
-    
-    // Optimistic update
-    setData(newData);
+
+    setData((prev) => {
+      targetData = {
+        users: updates.users !== undefined ? updates.users : prev.users,
+        projects: updates.projects !== undefined ? updates.projects : prev.projects,
+        processes: updates.processes !== undefined ? updates.processes : prev.processes,
+        tasks: updates.tasks !== undefined ? updates.tasks : prev.tasks,
+        processParts: updates.processParts !== undefined ? updates.processParts : prev.processParts,
+        infoProjects: updates.infoProjects !== undefined ? updates.infoProjects : (prev.infoProjects || []),
+      };
+      return targetData;
+    });
 
     try {
       const res = await fetch('/api/data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newData)
+        body: JSON.stringify(targetData)
       });
-      if (!res.ok) throw new Error('Failed to save');
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(errBody.error || '데이터 저장에 실패했습니다.');
+      }
     } catch (error) {
       console.error("Persist error:", error);
-      // Revert on error
       fetchData();
+      throw error;
     }
   };
 
