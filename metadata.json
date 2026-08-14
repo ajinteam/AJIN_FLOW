@@ -1,5 +1,6 @@
 {
   "name": "AJIN Production Flow Manager",
-  "description": "A simple and intuitive production process management application with real-time tracking, D-Day calculations, and task-level progress monitoring.",
-  "requestFramePermissions": []
+  "description": "아진정밀 생산 공정 및 제품 정보/도면(PDF/Excel/이미지) 열람·관리 시스템",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -35,7 +35,8 @@ async function startServer() {
         projects: [],
         processes: [],
         tasks: [],
-        processParts: []
+        processParts: [],
+        infoProjects: []
       };
       
       if (!data) {

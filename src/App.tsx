@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import * as XLSX from 'xlsx';
-import { Project, Process, Task, PROCESS_LIST, ProcessName, TaskStatus, UserConfig, ProcessPart } from './types';
+import { Project, Process, Task, PROCESS_LIST, ProcessName, TaskStatus, UserConfig, ProcessPart, InfoProject } from './types';
 import { format, differenceInDays, parseISO } from 'date-fns';
-import { Plus, Settings as SettingsIcon, LogOut, ChevronRight, Edit2, CheckCircle2, Clock, AlertCircle, Trash2, Save, X } from 'lucide-react';
+import { Plus, Settings as SettingsIcon, LogOut, ChevronRight, Edit2, CheckCircle2, Clock, AlertCircle, Trash2, Save, X, FileText, Layers, RefreshCw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { InfoView } from './components/InfoView';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -70,18 +71,22 @@ const Auth = ({ users, onLogin }: { users: UserConfig[], onLogin: (initials: str
       const inputPassword = password.trim().toUpperCase();
       
       if (inputPassword === MASTER_PASSWORD.toUpperCase()) {
-        onLogin('MASTER', MASTER_PASSWORD);
         localStorage.setItem('isAuthorized', 'true');
         localStorage.setItem('currentUserPassword', MASTER_PASSWORD);
+        localStorage.setItem('canAccessFlow', 'true');
+        localStorage.setItem('canAccessInfo', 'true');
+        onLogin('MASTER', MASTER_PASSWORD);
         return;
       }
 
       const user = users.find(u => u.password.toUpperCase() === inputPassword);
 
       if (user) {
-        onLogin(user.initials, user.password);
-        localStorage.setItem('isAuthorized', user.isAuthorized ? 'true' : 'false');
+        localStorage.setItem('isAuthorized', (user.isAuthorized || user.password.toUpperCase().includes('5200')) ? 'true' : 'false');
         localStorage.setItem('currentUserPassword', user.password);
+        localStorage.setItem('canAccessFlow', user.canAccessFlow !== false ? 'true' : 'false');
+        localStorage.setItem('canAccessInfo', user.canAccessInfo !== false ? 'true' : 'false');
+        onLogin(user.initials, user.password);
       } else {
         setError('비밀번호가 틀렸습니다.');
       }
@@ -98,13 +103,13 @@ const Auth = ({ users, onLogin }: { users: UserConfig[], onLogin: (initials: str
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="bg-white p-10 rounded-3xl shadow-2xl w-full max-w-md border border-slate-200"
+        className="bg-white p-8 md:p-10 rounded-3xl shadow-2xl w-full max-w-md border border-slate-200"
       >
         <div className="flex flex-col items-center mb-8">
-          <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center mb-4 shadow-lg shadow-blue-200">
-            <SettingsIcon className="text-white" size={32} />
+          <div className="w-16 h-16 bg-emerald-600 rounded-2xl flex items-center justify-center mb-4 shadow-lg shadow-emerald-200">
+            <span className="text-white font-black text-2xl">AJ</span>
           </div>
-          <h1 className="text-2xl font-black text-slate-800 text-center">생산공정 관리 시스템</h1>
+          <h1 className="text-2xl font-black text-slate-800 text-center">아진정밀 생산 & 정보 시스템</h1>
           <p className="text-slate-400 text-sm mt-1">비밀번호를 입력하여 접속하세요</p>
         </div>
 
@@ -114,7 +119,7 @@ const Auth = ({ users, onLogin }: { users: UserConfig[], onLogin: (initials: str
               type="password" 
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-6 py-4 rounded-2xl bg-slate-50 border border-slate-200 focus:ring-4 focus:ring-blue-100 focus:border-blue-500 outline-none transition-all text-center text-2xl tracking-widest font-bold"
+              className="w-full px-6 py-4 rounded-2xl bg-slate-50 border border-slate-200 focus:ring-4 focus:ring-emerald-100 focus:border-emerald-500 outline-none transition-all text-center text-2xl tracking-widest font-bold"
               placeholder="••••••"
               required
               autoFocus
@@ -124,7 +129,7 @@ const Auth = ({ users, onLogin }: { users: UserConfig[], onLogin: (initials: str
           <button 
             type="submit"
             disabled={loading}
-            className="w-full bg-slate-900 text-white py-4 rounded-2xl font-bold hover:bg-slate-800 transition-all shadow-xl shadow-slate-200 disabled:opacity-50"
+            className="w-full bg-slate-900 hover:bg-slate-800 text-white py-4 rounded-2xl font-bold transition-all shadow-xl shadow-slate-200 disabled:opacity-50 cursor-pointer"
           >
             {loading ? '확인 중...' : '접속하기'}
           </button>
@@ -143,6 +148,9 @@ const SettingsModal = ({ users, persistData, onClose, showConfirm }: {
 }) => {
   const [newInitials, setNewInitials] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [newCanAccessInfo, setNewCanAccessInfo] = useState(true);
+  const [newCanAccessFlow, setNewCanAccessFlow] = useState(true);
+  const [newIsAuthorized, setNewIsAuthorized] = useState(false);
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
 
   const handleAddOrUpdateUser = async () => {
@@ -153,7 +161,10 @@ const SettingsModal = ({ users, persistData, onClose, showConfirm }: {
       updatedUsers = updatedUsers.map(u => u.id === editingUserId ? {
         ...u,
         initials: newInitials.toUpperCase(),
-        password: newPassword
+        password: newPassword,
+        canAccessInfo: newCanAccessInfo,
+        canAccessFlow: newCanAccessFlow,
+        isAuthorized: newIsAuthorized
       } : u);
       setEditingUserId(null);
     } else {
@@ -161,26 +172,40 @@ const SettingsModal = ({ users, persistData, onClose, showConfirm }: {
         id: Date.now().toString(),
         initials: newInitials.toUpperCase(),
         password: newPassword,
-        isAuthorized: false
+        isAuthorized: newIsAuthorized,
+        canAccessInfo: newCanAccessInfo,
+        canAccessFlow: newCanAccessFlow
       });
     }
     
     await persistData({ users: updatedUsers });
     setNewInitials('');
     setNewPassword('');
+    setNewCanAccessInfo(true);
+    setNewCanAccessFlow(true);
+    setNewIsAuthorized(false);
   };
 
-  const toggleAuthorization = async (user: UserConfig) => {
-    const updatedUsers = users.map(u => u.id === user.id ? {
-      ...u,
-      isAuthorized: !u.isAuthorized
-    } : u);
+  const toggleUserPermission = async (userId: string, key: 'canAccessInfo' | 'canAccessFlow' | 'isAuthorized') => {
+    const updatedUsers = users.map(u => {
+      if (u.id === userId) {
+        const currentVal = key === 'isAuthorized' ? !!u.isAuthorized : (u[key] !== false);
+        return {
+          ...u,
+          [key]: !currentVal
+        };
+      }
+      return u;
+    });
     await persistData({ users: updatedUsers });
   };
 
   const handleEditClick = (user: UserConfig) => {
     setNewInitials(user.initials);
     setNewPassword(user.password);
+    setNewCanAccessInfo(user.canAccessInfo !== false);
+    setNewCanAccessFlow(user.canAccessFlow !== false);
+    setNewIsAuthorized(!!user.isAuthorized);
     setEditingUserId(user.id);
   };
 
@@ -196,42 +221,84 @@ const SettingsModal = ({ users, persistData, onClose, showConfirm }: {
       <motion.div 
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden"
+        className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-200"
       >
-        <div className="px-8 py-6 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-          <h3 className="font-black text-xl text-slate-800">시스템 설정</h3>
-          <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
-            <X size={24} />
+        <div className="px-6 md:px-8 py-5 bg-slate-900 text-white flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <SettingsIcon size={20} className="text-emerald-400" />
+            <h3 className="font-black text-lg md:text-xl">시스템 설정 & 사용자 권한 관리</h3>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-slate-800 text-slate-400 hover:text-white rounded-full transition-colors">
+            <X size={22} />
           </button>
         </div>
         
-        <div className="p-8 space-y-8">
-          <div>
-            <h4 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">
-              {editingUserId ? '사용자 수정' : '사용자 추가'}
+        <div className="p-6 md:p-8 space-y-6 max-h-[80vh] overflow-y-auto">
+          {/* User Registration Form */}
+          <div className="bg-slate-50 p-4 md:p-5 rounded-2xl border border-slate-200">
+            <h4 className="text-xs font-black text-slate-500 uppercase tracking-widest mb-3">
+              {editingUserId ? '사용자 정보 및 권한 수정' : '새 사용자 등록'}
             </h4>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-3 mb-3">
               <input 
                 type="text" 
                 placeholder="이니셜 (예: AJ)" 
                 value={newInitials}
                 onChange={(e) => setNewInitials(e.target.value)}
-                className="px-4 py-3 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-3.5 py-2.5 rounded-xl border border-slate-200 bg-white outline-none focus:ring-2 focus:ring-blue-500 font-bold text-sm"
               />
               <input 
                 type="text" 
                 placeholder="비밀번호" 
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                className="px-4 py-3 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-3.5 py-2.5 rounded-xl border border-slate-200 bg-white outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
               />
             </div>
-            <div className="flex gap-2 mt-4">
+
+            {/* Permission Checkbox Buttons */}
+            <div className="flex items-center gap-2 mb-4 flex-wrap">
+              <span className="text-xs font-bold text-slate-500">접근 권한:</span>
+              <button
+                type="button"
+                onClick={() => setNewCanAccessInfo(!newCanAccessInfo)}
+                className={cn(
+                  "px-3 py-1.5 rounded-lg text-xs font-bold transition-all border cursor-pointer",
+                  newCanAccessInfo ? "bg-emerald-100 text-emerald-700 border-emerald-300" : "bg-slate-100 text-slate-400 border-slate-200"
+                )}
+              >
+                {newCanAccessInfo ? '✓ Info 접근 가능' : '✕ Info 제한'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setNewCanAccessFlow(!newCanAccessFlow)}
+                className={cn(
+                  "px-3 py-1.5 rounded-lg text-xs font-bold transition-all border cursor-pointer",
+                  newCanAccessFlow ? "bg-blue-100 text-blue-700 border-blue-300" : "bg-slate-100 text-slate-400 border-slate-200"
+                )}
+              >
+                {newCanAccessFlow ? '✓ Flow 접근 가능' : '✕ Flow 제한'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setNewIsAuthorized(!newIsAuthorized)}
+                className={cn(
+                  "px-3 py-1.5 rounded-lg text-xs font-bold transition-all border cursor-pointer",
+                  newIsAuthorized ? "bg-amber-100 text-amber-700 border-amber-300" : "bg-slate-100 text-slate-400 border-slate-200"
+                )}
+              >
+                {newIsAuthorized ? '✓ 관리자(편집/삭제)' : '일반 사용자'}
+              </button>
+            </div>
+
+            <div className="flex gap-2">
               <button 
                 onClick={handleAddOrUpdateUser}
-                className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition-colors"
+                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-xl font-bold transition-colors text-sm shadow-md shadow-blue-100 cursor-pointer"
               >
-                {editingUserId ? '수정 완료' : '사용자 등록'}
+                {editingUserId ? '수정 저장' : '사용자 추가 등록'}
               </button>
               {editingUserId && (
                 <button 
@@ -239,8 +306,11 @@ const SettingsModal = ({ users, persistData, onClose, showConfirm }: {
                     setEditingUserId(null);
                     setNewInitials('');
                     setNewPassword('');
+                    setNewCanAccessInfo(true);
+                    setNewCanAccessFlow(true);
+                    setNewIsAuthorized(false);
                   }}
-                  className="px-6 bg-slate-100 text-slate-600 py-3 rounded-xl font-bold hover:bg-slate-200 transition-colors"
+                  className="px-4 bg-slate-200 hover:bg-slate-300 text-slate-700 py-2.5 rounded-xl font-bold transition-colors text-sm cursor-pointer"
                 >
                   취소
                 </button>
@@ -248,49 +318,89 @@ const SettingsModal = ({ users, persistData, onClose, showConfirm }: {
             </div>
           </div>
 
+          {/* Users List with Permission Toggles */}
           <div>
-            <h4 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">사용자 목록</h4>
-            <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2 no-scrollbar">
-              {users.map(user => (
-                <div key={user.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                  <div className="flex items-center gap-4">
-                    <span className="w-10 h-10 bg-white rounded-xl flex items-center justify-center font-black text-blue-600 shadow-sm border border-slate-100">
-                      {user.initials}
-                    </span>
-                    <span className="font-mono text-slate-600">{user.password}</span>
+            <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3">사용자 및 권한 목록 ({users.length}명)</h4>
+            <div className="space-y-2.5 max-h-[260px] overflow-y-auto pr-1 no-scrollbar">
+              {users.map(user => {
+                const hasInfo = user.canAccessInfo !== false;
+                const hasFlow = user.canAccessFlow !== false;
+                const isAdminUser = !!user.isAuthorized || user.password.toUpperCase().includes('5200');
+
+                return (
+                  <div key={user.id} className="p-3 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <span className="w-9 h-9 bg-white rounded-xl flex items-center justify-center font-black text-blue-600 shadow-sm border border-slate-200 text-sm">
+                          {user.initials}
+                        </span>
+                        <div>
+                          <span className="font-mono text-xs font-bold text-slate-700">{user.password}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button 
+                          onClick={() => handleEditClick(user)}
+                          className="p-1.5 text-slate-400 hover:text-blue-600 transition-colors"
+                          title="수정"
+                        >
+                          <Edit2 size={16} />
+                        </button>
+                        <button 
+                          onClick={() => handleDeleteUser(user.id)}
+                          className="p-1.5 text-slate-400 hover:text-red-500 transition-colors"
+                          title="삭제"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Permission Status & Direct Toggle Chips */}
+                    <div className="flex items-center gap-1.5 flex-wrap pt-1 border-t border-slate-200/60 text-[11px]">
+                      <button
+                        onClick={() => toggleUserPermission(user.id, 'canAccessInfo')}
+                        className={cn(
+                          "px-2 py-0.5 rounded-md font-bold transition-colors cursor-pointer",
+                          hasInfo ? "bg-emerald-100 text-emerald-800" : "bg-slate-200 text-slate-400 line-through"
+                        )}
+                        title="Info 권한 토글"
+                      >
+                        Info: {hasInfo ? 'ON' : 'OFF'}
+                      </button>
+
+                      <button
+                        onClick={() => toggleUserPermission(user.id, 'canAccessFlow')}
+                        className={cn(
+                          "px-2 py-0.5 rounded-md font-bold transition-colors cursor-pointer",
+                          hasFlow ? "bg-blue-100 text-blue-800" : "bg-slate-200 text-slate-400 line-through"
+                        )}
+                        title="Flow 권한 토글"
+                      >
+                        Flow: {hasFlow ? 'ON' : 'OFF'}
+                      </button>
+
+                      <button
+                        onClick={() => toggleUserPermission(user.id, 'isAuthorized')}
+                        className={cn(
+                          "px-2 py-0.5 rounded-md font-bold transition-colors cursor-pointer",
+                          isAdminUser ? "bg-amber-100 text-amber-800 font-black" : "bg-slate-100 text-slate-400"
+                        )}
+                        title="관리자 권한 토글"
+                      >
+                        {isAdminUser ? '★관리자' : '일반'}
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1">
-                    <button 
-                      onClick={() => toggleAuthorization(user)}
-                      className={cn(
-                        "px-2 py-1 rounded text-[10px] font-bold transition-colors",
-                        user.isAuthorized ? "bg-emerald-100 text-emerald-600" : "bg-slate-100 text-slate-400"
-                      )}
-                    >
-                      {user.isAuthorized ? '권한있음' : '권한없음'}
-                    </button>
-                    <button 
-                      onClick={() => handleEditClick(user)}
-                      className="p-2 text-slate-400 hover:text-blue-600 transition-colors"
-                    >
-                      <Edit2 size={18} />
-                    </button>
-                    <button 
-                      onClick={() => handleDeleteUser(user.id)}
-                      className="p-2 text-slate-400 hover:text-red-500 transition-colors"
-                    >
-                      <Trash2 size={18} />
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 
-          <div className="pt-4 border-t border-slate-100">
+          <div className="pt-2 border-t border-slate-100">
             <button 
               onClick={() => {
-                showConfirm('데이터 초기화', '모든 생산 데이터를 초기화하시겠습니까? (사용자 정보는 유지됩니다)', async () => {
+                showConfirm('데이터 초기화', '모든 생산/정보 데이터를 초기화하시겠습니까? (사용자 계정은 유지됩니다)', async () => {
                   try {
                     const res = await fetch('/api/reset', { method: 'POST' });
                     if (res.ok) {
@@ -303,10 +413,10 @@ const SettingsModal = ({ users, persistData, onClose, showConfirm }: {
                   }
                 });
               }}
-              className="w-full bg-red-50 text-red-600 py-3 rounded-xl font-bold hover:bg-red-100 transition-all border border-red-100 flex items-center justify-center gap-2"
+              className="w-full bg-red-50 hover:bg-red-100 text-red-600 py-3 rounded-xl font-bold transition-all border border-red-200 flex items-center justify-center gap-2 text-sm cursor-pointer"
             >
-              <Trash2 size={18} />
-              전체 데이터 초기화
+              <Trash2 size={16} />
+              <span>전체 생산 및 문서 데이터 초기화</span>
             </button>
           </div>
         </div>
@@ -395,7 +505,8 @@ export default function App() {
         projects: Array.isArray(json.projects) ? json.projects : [],
         processes: Array.isArray(json.processes) ? json.processes : [],
         tasks: Array.isArray(json.tasks) ? json.tasks : [],
-        processParts: Array.isArray(json.processParts) ? json.processParts : []
+        processParts: Array.isArray(json.processParts) ? json.processParts : [],
+        infoProjects: Array.isArray(json.infoProjects) ? json.infoProjects : []
       };
       setData(sanitizedData);
       setGlobalError(null);
@@ -418,6 +529,7 @@ export default function App() {
       processes: updates.processes !== undefined ? updates.processes : data.processes,
       tasks: updates.tasks !== undefined ? updates.tasks : data.tasks,
       processParts: updates.processParts !== undefined ? updates.processParts : data.processParts,
+      infoProjects: updates.infoProjects !== undefined ? updates.infoProjects : (data.infoProjects || []),
     };
     
     // Optimistic update
@@ -510,6 +622,7 @@ function Dashboard({ initialData, persistData, refreshData }: {
   const [tasks, setTasks] = useState<Task[]>(initialData.tasks || []);
   const [processParts, setProcessParts] = useState<ProcessPart[]>(initialData.processParts || []);
   const [users, setUsers] = useState<UserConfig[]>(initialData.users || []);
+  const [infoProjects, setInfoProjects] = useState<InfoProject[]>(initialData.infoProjects || []);
 
   useEffect(() => {
     setProjects(initialData.projects || []);
@@ -517,7 +630,31 @@ function Dashboard({ initialData, persistData, refreshData }: {
     setTasks(initialData.tasks || []);
     setProcessParts(initialData.processParts || []);
     setUsers(initialData.users || []);
+    setInfoProjects(initialData.infoProjects || []);
   }, [initialData]);
+
+  const currentUser = users.find(u => u.initials === userInitials);
+  const isMaster = userInitials === 'MASTER' || (localStorage.getItem('currentUserPassword')?.toUpperCase().includes('5200') ?? false);
+  const isAdmin = isMaster || (currentUser ? (!!currentUser.isAuthorized || currentUser.password.toUpperCase().includes('5200')) : false) || (localStorage.getItem('isAuthorized') === 'true');
+  
+  const canAccessInfo = isMaster || (currentUser ? currentUser.canAccessInfo !== false : true);
+  const canAccessFlow = isMaster || (currentUser ? currentUser.canAccessFlow !== false : true);
+
+  // App defaults to 'info' view as requested
+  const [currentView, setCurrentView] = useState<'info' | 'flow'>(() => {
+    if (canAccessInfo) return 'info';
+    if (canAccessFlow) return 'flow';
+    return 'info';
+  });
+
+  useEffect(() => {
+    if (!canAccessInfo && canAccessFlow && currentView === 'info') {
+      setCurrentView('flow');
+    } else if (!canAccessFlow && canAccessInfo && currentView === 'flow') {
+      setCurrentView('info');
+    }
+  }, [canAccessInfo, canAccessFlow, currentView]);
+
   const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -1064,53 +1201,137 @@ function Dashboard({ initialData, persistData, refreshData }: {
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 font-sans">
       {/* Header */}
-      <header className="bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between sticky top-0 z-10 shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-100">
-            <SettingsIcon className="text-white" size={16} />
+      <header className="bg-white border-b border-slate-200 px-3 md:px-6 py-2.5 flex items-center justify-between sticky top-0 z-20 shadow-sm">
+        <div className="flex items-center gap-2 md:gap-4">
+          <div className={cn(
+            "w-8 h-8 rounded-xl flex items-center justify-center font-black text-white text-xs shadow-md transition-colors",
+            currentView === 'info' ? "bg-emerald-600 shadow-emerald-200" : "bg-blue-600 shadow-blue-200"
+          )}>
+            AJ
           </div>
-          <h1 className="text-lg font-black tracking-tight text-slate-800">Flow</h1>
-          <div className="flex items-center gap-2 px-2 py-1 bg-slate-50 rounded-xl border border-slate-100">
-            <span className="w-6 h-6 rounded-md bg-blue-100 text-blue-600 flex items-center justify-center font-black text-[10px]">
+
+          {/* View Toggle Tabs */}
+          {(canAccessInfo && canAccessFlow) ? (
+            <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200/80">
+              <button 
+                onClick={() => setCurrentView('info')}
+                className={cn(
+                  "px-3 py-1 rounded-lg font-black text-xs md:text-sm transition-all flex items-center gap-1.5 cursor-pointer",
+                  currentView === 'info' 
+                    ? "bg-emerald-600 text-white shadow-sm" 
+                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/50"
+                )}
+              >
+                <FileText size={15} />
+                <span>Info</span>
+              </button>
+              <button 
+                onClick={() => setCurrentView('flow')}
+                className={cn(
+                  "px-3 py-1 rounded-lg font-black text-xs md:text-sm transition-all flex items-center gap-1.5 cursor-pointer",
+                  currentView === 'flow' 
+                    ? "bg-blue-600 text-white shadow-sm" 
+                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/50"
+                )}
+              >
+                <Layers size={15} />
+                <span>Flow</span>
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5">
+              <span className={cn(
+                "px-3 py-1 rounded-lg font-black text-xs md:text-sm text-white flex items-center gap-1.5",
+                currentView === 'info' ? "bg-emerald-600" : "bg-blue-600"
+              )}>
+                {currentView === 'info' ? <FileText size={15} /> : <Layers size={15} />}
+                <span>{currentView === 'info' ? 'Info 모드' : 'Flow 모드'}</span>
+              </span>
+            </div>
+          )}
+
+          {/* User Badge */}
+          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-50 rounded-xl border border-slate-200">
+            <span className="w-5 h-5 rounded-md bg-blue-100 text-blue-700 flex items-center justify-center font-black text-[10px]">
               {userInitials}
             </span>
+            {isAdmin && (
+              <span className="text-[10px] font-black text-amber-600 hidden sm:inline">
+                ★관리자
+              </span>
+            )}
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <button 
-            onClick={() => setShowCompleted(!showCompleted)}
-            className={cn(
-              "px-3 py-2 rounded-xl font-bold transition-all text-xs",
-              showCompleted ? "bg-blue-600 text-white shadow-lg shadow-blue-100" : "bg-white text-slate-600 border border-slate-200"
-            )}
-          >
-            {showCompleted ? '진행 중' : '완료 목록'}
-          </button>
-          {userInitials === 'MASTER' && (
+
+        {/* Right Action Buttons */}
+        <div className="flex items-center gap-1.5 md:gap-2">
+          {currentView === 'flow' && (
+            <>
+              <button 
+                onClick={() => setShowCompleted(!showCompleted)}
+                className={cn(
+                  "px-3 py-1.5 rounded-xl font-bold transition-all text-xs cursor-pointer",
+                  showCompleted ? "bg-blue-600 text-white shadow-md shadow-blue-100" : "bg-white text-slate-700 border border-slate-200 hover:bg-slate-50"
+                )}
+              >
+                {showCompleted ? '진행 중 보기' : '완료 목록'}
+              </button>
+              {(isAdmin || userInitials === 'MASTER') && (
+                <button 
+                  onClick={() => setIsProjectModalOpen(true)}
+                  className="flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-xl font-bold transition-all shadow-md shadow-blue-100 text-xs cursor-pointer"
+                >
+                  <Plus size={15} />
+                  <span>+ PROJ</span>
+                </button>
+              )}
+            </>
+          )}
+
+          {(userInitials === 'MASTER' || isAdmin) && (
             <button 
               onClick={() => setIsSettingsOpen(true)}
-              className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all"
+              className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-all cursor-pointer"
+              title="시스템 설정 및 사용자 관리"
             >
-              <SettingsIcon size={20} />
+              <SettingsIcon size={19} />
             </button>
           )}
+
           <button 
-            onClick={() => setIsProjectModalOpen(true)}
-            className="flex items-center gap-1 bg-blue-600 text-white px-3 py-2 rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 text-xs"
+            onClick={() => refreshData()}
+            className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-all cursor-pointer"
+            title="새로고침"
           >
-            <Plus size={16} />
-            <span>PROJ</span>
+            <RefreshCw size={17} />
           </button>
+
           <button 
-            onClick={() => setUserInitials(null)}
-            className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
+            onClick={() => {
+              localStorage.removeItem('userInitials');
+              localStorage.removeItem('currentUserPassword');
+              localStorage.removeItem('isAuthorized');
+              setUserInitials(null);
+            }}
+            className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all cursor-pointer"
+            title="로그아웃"
           >
-            <LogOut size={20} />
+            <LogOut size={19} />
           </button>
         </div>
       </header>
 
       {/* Main Content */}
+      {currentView === 'info' ? (
+        <InfoView 
+          infoProjects={infoProjects}
+          persistData={persistData}
+          isAdmin={isAdmin}
+          userInitials={userInitials}
+          showConfirm={showConfirm}
+          showAlert={showAlert}
+        />
+      ) : (
       <main className="p-2 max-w-[1800px] mx-auto">
         <div className="space-y-3">
           {projects
@@ -1291,6 +1512,7 @@ function Dashboard({ initialData, persistData, refreshData }: {
           })}
         </div>
       </main>
+      )}
 
       {/* Modals */}
       <AnimatePresence>

@@ -5,12 +5,41 @@ export interface UserConfig {
   initials: string;
   password: string;
   isAuthorized?: boolean;
+  canAccessFlow?: boolean; // Flow 메뉴 접근 권한
+  canAccessInfo?: boolean; // Info 메뉴 접근 권한
 }
 
 export interface User {
   id: string;
   initials: string;
   name: string;
+}
+
+export interface InfoFile {
+  id: string;
+  name: string;
+  type: 'pdf' | 'excel' | 'image' | 'other';
+  size: number;
+  dataUrl: string; // Base64 data URL
+  uploadedAt: string;
+  parsedSheets?: {
+    name: string;
+    data: any[][];
+  }[];
+}
+
+export interface InfoProject {
+  id: string;
+  model: string;          // 모델명 (예: EF62)
+  deviceType: string;     // 기종 (예: CPH-332R)
+  quantity: string | number; // 생산수량 (예: 5000 또는 5,000개)
+  shipmentDate: string;   // 선적날짜 (YYYY-MM-DD)
+  status: 'active' | 'completed';
+  completedAt?: string;
+  createdAt: string;
+  sortOrder: number;
+  files: InfoFile[];
+  memo?: string;
 }
 
 export interface Project {

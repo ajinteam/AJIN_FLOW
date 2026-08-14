@@ -23,7 +23,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         projects: [],
         processes: [],
         tasks: [],
-        processParts: []
+        processParts: [],
+        infoProjects: []
       };
       
       if (!data) {
