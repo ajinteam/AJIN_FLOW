@@ -602,7 +602,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
                   </div>
 
                   <div className="flex items-center gap-1 font-bold text-white group-hover:translate-x-0.5 transition-transform">
-                    <span>{fileCount > 0 ? '터치하여 문서 열람' : '터치하여 파일 등록'}</span>
+                    <span>터치하여 문서 열람</span>
                     <ChevronRight size={15} />
                   </div>
                 </div>
@@ -645,21 +645,9 @@ export const InfoView: React.FC<InfoViewProps> = ({
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {isAdmin && (
-                    <button
-                      onClick={() => {
-                        setUploadTargetProjectId(viewerProject.id);
-                        setIsUploadModalOpen(true);
-                      }}
-                      className="flex items-center gap-1 bg-[#F59E0B] hover:bg-amber-600 text-white px-3 py-1.5 rounded-xl font-bold text-xs shadow transition-all cursor-pointer"
-                    >
-                      <Upload size={14} />
-                      <span className="hidden sm:inline">추가 업로드</span>
-                    </button>
-                  )}
                   <button
                     onClick={() => setViewerProject(null)}
-                    className="p-2 hover:bg-slate-800 text-slate-300 hover:text-white rounded-full transition-colors"
+                    className="p-2 hover:bg-slate-800 text-slate-300 hover:text-white rounded-full transition-colors cursor-pointer"
                   >
                     <X size={22} />
                   </button>
@@ -703,21 +691,9 @@ export const InfoView: React.FC<InfoViewProps> = ({
                       <FileText size={32} />
                     </div>
                     <h4 className="text-base font-bold text-slate-700 mb-1">업로드된 파일이 없습니다</h4>
-                    <p className="text-xs text-slate-400 max-w-xs mb-4">
-                      PDF 작업지시서, 엑셀 부품표, 현장 사진 등을 업로드하면 휴대폰에서 편리하게 열람할 수 있습니다.
+                    <p className="text-xs text-slate-400 max-w-xs">
+                      상단의 [업로드] 버튼을 통해 작업지시서(PDF), 부품표(Excel), 사진을 등록할 수 있습니다.
                     </p>
-                    {isAdmin && (
-                      <button
-                        onClick={() => {
-                          setUploadTargetProjectId(viewerProject.id);
-                          setIsUploadModalOpen(true);
-                        }}
-                        className="bg-amber-500 hover:bg-amber-600 text-white px-5 py-2 rounded-xl font-bold text-xs shadow-md shadow-amber-200 flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <Upload size={15} />
-                        <span>파일 업로드하기</span>
-                      </button>
-                    )}
                   </div>
                 ) : (
                   (() => {
