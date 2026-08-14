@@ -4,6 +4,7 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
+import multer from "multer";
 import redis from "./src/lib/redis.ts";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -16,7 +17,7 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // Increase payload limit to 50MB for file uploads
+  // Increase payload limit for JSON APIs
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
@@ -26,6 +27,29 @@ async function startServer() {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
 
+  // Multer configuration for streaming direct binary uploads up to 100MB
+  const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+      cb(null, uploadsDir);
+    },
+    filename: (req, file, cb) => {
+      let originalName = file.originalname;
+      try {
+        originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
+      } catch {
+        originalName = file.originalname;
+      }
+      const timestamp = Date.now();
+      const sanitizedName = originalName.replace(/[^a-zA-Z0-9._가-힣-]/g, '_');
+      cb(null, `${timestamp}_${sanitizedName}`);
+    }
+  });
+
+  const upload = multer({
+    storage,
+    limits: { fileSize: 100 * 1024 * 1024 } // 100MB limit
+  });
+
   // Serve uploaded files statically
   app.use('/uploads', express.static(uploadsDir));
 
@@ -34,19 +58,32 @@ async function startServer() {
     res.json({ status: "ok", env: process.env.NODE_ENV });
   });
 
-  // Dedicated File Upload Endpoint
-  app.post("/api/upload-file", async (req, res) => {
+  // Dedicated Streaming File Upload Endpoint (FormData support)
+  app.post("/api/upload-file", upload.single('file'), async (req, res) => {
     try {
-      const { filename, base64 } = req.body;
-      if (!filename || !base64) {
-        return res.status(400).json({ error: "Filename and base64 content required" });
+      if (req.file) {
+        let originalName = req.file.originalname;
+        try {
+          originalName = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
+        } catch {}
+        const fileUrl = `/uploads/${encodeURIComponent(req.file.filename)}`;
+        return res.json({
+          success: true,
+          url: fileUrl,
+          filename: req.file.filename,
+          originalName: originalName,
+          size: req.file.size
+        });
       }
 
-      // Remove base64 data URL prefix if present
+      // Fallback for base64 JSON payload if sent
+      const { filename, base64 } = req.body;
+      if (!filename || !base64) {
+        return res.status(400).json({ error: "No file uploaded or missing base64" });
+      }
+
       const cleanBase64 = base64.replace(/^data:.*?;base64,/, '');
       const buffer = Buffer.from(cleanBase64, 'base64');
-
-      // Create a unique safe filename
       const timestamp = Date.now();
       const sanitizedName = filename.replace(/[^a-zA-Z0-9._가-힣-]/g, '_');
       const savedFileName = `${timestamp}_${sanitizedName}`;

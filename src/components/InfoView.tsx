@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useCallback } from 'react';
 import { InfoProject, InfoFile } from '../types';
 import { 
   FileText, 
@@ -23,12 +23,14 @@ import {
   ChevronRight,
   ZoomIn,
   ZoomOut,
-  RotateCw
+  RotateCw,
+  Move
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { UniversalPdfViewer } from './UniversalPdfViewer';
 
 function cn(...inputs: any[]) {
   return twMerge(clsx(inputs));
@@ -282,7 +284,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
     });
   };
 
-  // Upload files handler (PDF, Excel, Images with compression, server upload & overwrite)
+  // Upload files handler (PDF, Excel, Images with streaming server upload & overwrite)
   const handleUploadFiles = async (targetProjectId: string, files: File[]) => {
     const targetProj = infoProjects.find((p) => p.id === targetProjectId);
     if (!targetProj) {
@@ -296,47 +298,48 @@ export const InfoView: React.FC<InfoViewProps> = ({
       for (const file of files) {
         const ext = file.name.split('.').pop()?.toLowerCase() || '';
         let fileType: 'pdf' | 'excel' | 'image' | 'other' = 'other';
-        let rawBase64 = '';
         let fileSize = file.size;
         let parsedSheets: { name: string; data: any[][] }[] | undefined = undefined;
+        let fileToUpload: File | Blob = file;
 
         if (ext === 'pdf') {
           fileType = 'pdf';
-          rawBase64 = await readFileAsDataUrl(file);
         } else if (['xlsx', 'xls', 'csv'].includes(ext)) {
           fileType = 'excel';
-          rawBase64 = await readFileAsDataUrl(file);
-          parsedSheets = await parseExcelFile(file);
+          try {
+            parsedSheets = await parseExcelFile(file);
+          } catch (e) {
+            console.warn('Excel parsing warning:', e);
+          }
         } else if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'].includes(ext)) {
           fileType = 'image';
-          const optimized = await optimizeImageFile(file);
-          rawBase64 = optimized.dataUrl;
-          fileSize = optimized.size;
-        } else {
-          rawBase64 = await readFileAsDataUrl(file);
+          try {
+            const optimized = await optimizeImageFile(file);
+            const res = await fetch(optimized.dataUrl);
+            fileToUpload = await res.blob();
+            fileSize = optimized.size;
+          } catch (e) {
+            fileToUpload = file;
+          }
         }
 
-        // Upload to server endpoint to obtain a persistent static URL
-        let savedUrl = rawBase64;
-        try {
-          const uploadRes = await fetch('/api/upload-file', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              filename: file.name,
-              base64: rawBase64
-            })
-          });
-          if (uploadRes.ok) {
-            const uploadJson = await uploadRes.json();
-            if (uploadJson.url) {
-              savedUrl = uploadJson.url;
-              fileSize = uploadJson.size || fileSize;
-            }
-          }
-        } catch (uploadErr) {
-          console.warn('Server file upload failed, fallback to direct dataUrl:', uploadErr);
+        // Fast streaming FormData upload (supports large PDFs up to 100MB)
+        const formData = new FormData();
+        formData.append('file', fileToUpload, file.name);
+
+        const uploadRes = await fetch('/api/upload-file', {
+          method: 'POST',
+          body: formData
+        });
+
+        if (!uploadRes.ok) {
+          const errData = await uploadRes.json().catch(() => ({}));
+          throw new Error(errData.error || `${file.name} 업로드 서버 처리 오류 (${uploadRes.status})`);
         }
+
+        const uploadJson = await uploadRes.json();
+        const savedUrl = uploadJson.url || `/uploads/${encodeURIComponent(uploadJson.filename || file.name)}`;
+        fileSize = uploadJson.size || fileSize;
 
         const newFileObj: InfoFile = {
           id: Date.now().toString() + '_' + Math.random().toString(36).substr(2, 4),
@@ -635,29 +638,29 @@ export const InfoView: React.FC<InfoViewProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* 1. File Viewer & Document Preview Modal (Mobile Optimized)               */}
+      {/* 1. File Viewer & Document Preview Modal (Edge-to-Edge & Mobile Optimized)  */}
       {/* ========================================================================= */}
       <AnimatePresence>
         {viewerProject && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-2 md:p-4 bg-slate-900/70 backdrop-blur-sm overflow-hidden">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-0 md:p-1.5 bg-slate-950/90 backdrop-blur-sm overflow-hidden">
             <motion.div
-              initial={{ opacity: 0, scale: 0.96 }}
+              initial={{ opacity: 0, scale: 0.98 }}
               animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.96 }}
-              className="bg-white rounded-3xl shadow-2xl w-full max-w-6xl h-[92vh] flex flex-col overflow-hidden border border-slate-200"
+              exit={{ opacity: 0, scale: 0.98 }}
+              className="bg-slate-900 w-full h-full rounded-none md:rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-slate-800"
             >
               {/* Modal Header */}
-              <div className="px-4 md:px-6 py-3.5 bg-slate-900 text-white flex items-center justify-between shrink-0">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-9 h-9 bg-emerald-500 rounded-xl flex items-center justify-center font-black text-sm shrink-0">
+              <div className="px-3 md:px-5 py-2.5 bg-slate-900 text-white flex items-center justify-between shrink-0 border-b border-slate-800">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 bg-emerald-500 rounded-lg flex items-center justify-center font-black text-xs shrink-0 shadow-sm">
                     Info
                   </div>
                   <div className="truncate">
-                    <h3 className="font-black text-base md:text-lg truncate flex items-center gap-2">
+                    <h3 className="font-black text-sm md:text-base truncate flex items-center gap-2">
                       <span>{viewerProject.model}</span>
-                      <span className="text-emerald-400 text-sm font-normal">({viewerProject.deviceType})</span>
+                      <span className="text-emerald-400 text-xs md:text-sm font-normal">({viewerProject.deviceType})</span>
                     </h3>
-                    <p className="text-xs text-slate-400">
+                    <p className="text-[11px] text-slate-400">
                       선적: {viewerProject.shipmentDate || '미정'} | 수량:{' '}
                       {typeof viewerProject.quantity === 'number'
                         ? viewerProject.quantity.toLocaleString()
@@ -666,10 +669,11 @@ export const InfoView: React.FC<InfoViewProps> = ({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   <button
                     onClick={() => setViewerProject(null)}
                     className="p-2 hover:bg-slate-800 text-slate-300 hover:text-white rounded-full transition-colors cursor-pointer"
+                    title="닫기"
                   >
                     <X size={22} />
                   </button>
@@ -677,9 +681,9 @@ export const InfoView: React.FC<InfoViewProps> = ({
               </div>
 
               {/* File Selection Tabs Header */}
-              <div className="bg-slate-100 border-b border-slate-200 px-3 md:px-6 py-2 flex items-center gap-2 overflow-x-auto shrink-0 no-scrollbar">
+              <div className="bg-slate-950 border-b border-slate-800 px-2 md:px-4 py-1.5 flex items-center gap-1.5 overflow-x-auto shrink-0 no-scrollbar">
                 {(viewerProject.files || []).length === 0 ? (
-                  <span className="text-xs text-slate-400 font-medium py-1">등록된 첨부 문서/사진이 없습니다.</span>
+                  <span className="text-xs text-slate-500 font-medium py-1">등록된 첨부 문서/사진이 없습니다.</span>
                 ) : (
                   viewerProject.files.map((file, idx) => {
                     const isActive = idx === activeFileIndex;
@@ -688,16 +692,16 @@ export const InfoView: React.FC<InfoViewProps> = ({
                         key={file.id}
                         onClick={() => setActiveFileIndex(idx)}
                         className={cn(
-                          'flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold transition-all shrink-0 max-w-[220px] cursor-pointer',
+                          'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0 max-w-[200px] cursor-pointer',
                           isActive
-                            ? 'bg-white text-slate-900 shadow-sm border border-slate-200'
-                            : 'text-slate-600 hover:bg-slate-200'
+                            ? 'bg-slate-800 text-white shadow-sm border border-slate-700'
+                            : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200'
                         )}
                       >
-                        {file.type === 'pdf' && <FileText size={14} className="text-rose-500 shrink-0" />}
-                        {file.type === 'excel' && <FileSpreadsheet size={14} className="text-emerald-600 shrink-0" />}
-                        {file.type === 'image' && <ImageIcon size={14} className="text-amber-500 shrink-0" />}
-                        {file.type === 'other' && <FileCheck size={14} className="text-blue-500 shrink-0" />}
+                        {file.type === 'pdf' && <FileText size={13} className="text-rose-400 shrink-0" />}
+                        {file.type === 'excel' && <FileSpreadsheet size={13} className="text-emerald-400 shrink-0" />}
+                        {file.type === 'image' && <ImageIcon size={13} className="text-amber-400 shrink-0" />}
+                        {file.type === 'other' && <FileCheck size={13} className="text-blue-400 shrink-0" />}
                         <span className="truncate">{file.name}</span>
                       </button>
                     );
@@ -706,13 +710,13 @@ export const InfoView: React.FC<InfoViewProps> = ({
               </div>
 
               {/* File Viewer Main Body */}
-              <div className="flex-1 bg-slate-50 overflow-hidden flex flex-col">
+              <div className="flex-1 bg-slate-950 overflow-hidden flex flex-col">
                 {(viewerProject.files || []).length === 0 ? (
-                  <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-                    <div className="w-16 h-16 bg-slate-200 text-slate-400 rounded-3xl flex items-center justify-center mb-3">
+                  <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-slate-900">
+                    <div className="w-16 h-16 bg-slate-800 text-slate-400 rounded-3xl flex items-center justify-center mb-3">
                       <FileText size={32} />
                     </div>
-                    <h4 className="text-base font-bold text-slate-700 mb-1">업로드된 파일이 없습니다</h4>
+                    <h4 className="text-base font-bold text-slate-200 mb-1">업로드된 파일이 없습니다</h4>
                     <p className="text-xs text-slate-400 max-w-xs">
                       상단의 [업로드] 버튼을 통해 작업지시서(PDF), 부품표(Excel), 사진을 등록할 수 있습니다.
                     </p>
@@ -724,11 +728,11 @@ export const InfoView: React.FC<InfoViewProps> = ({
 
                     return (
                       <div className="flex-1 flex flex-col overflow-hidden">
-                        {/* File Action sub-bar */}
-                        <div className="px-4 py-2 bg-white border-b border-slate-200 flex items-center justify-between text-xs shrink-0">
+                        {/* File Action sub-bar (Only shown for non-PDF or extra actions) */}
+                        <div className="px-3 py-1.5 bg-slate-900 border-b border-slate-800 flex items-center justify-between text-xs shrink-0">
                           <div className="flex items-center gap-2 truncate">
-                            <span className="font-bold text-slate-800 truncate">{currentFile.name}</span>
-                            <span className="text-slate-400 text-[11px]">
+                            <span className="font-bold text-slate-200 truncate">{currentFile.name}</span>
+                            <span className="text-slate-500 text-[11px]">
                               ({(currentFile.size / 1024).toFixed(1)} KB)
                             </span>
                           </div>
@@ -737,7 +741,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
                             <a
                               href={currentFile.dataUrl}
                               download={currentFile.name}
-                              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold transition-all"
+                              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs transition-all"
                             >
                               <Download size={13} />
                               <span>다운로드</span>
@@ -745,7 +749,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
                             {isAdmin && (
                               <button
                                 onClick={() => handleDeleteFile(viewerProject.id, currentFile.id)}
-                                className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg transition-all"
+                                className="p-1 text-rose-400 hover:bg-rose-950/50 rounded-lg transition-all cursor-pointer"
                                 title="파일 삭제"
                               >
                                 <Trash2 size={15} />
@@ -754,17 +758,14 @@ export const InfoView: React.FC<InfoViewProps> = ({
                           </div>
                         </div>
 
-                        {/* Rendering by Type */}
-                        <div className="flex-1 overflow-auto p-2 md:p-4 flex items-center justify-center">
-                          {/* 1. PDF File Viewer */}
+                        {/* Rendering by Type (Edge-to-Edge full screen viewport) */}
+                        <div className="flex-1 overflow-hidden flex flex-col">
+                          {/* 1. PDF File Viewer (Canvas-based Universal PDF Viewer with Mouse Drag & Mobile support) */}
                           {currentFile.type === 'pdf' && (
-                            <div className="w-full h-full rounded-2xl overflow-hidden shadow-sm border border-slate-200 bg-slate-800 flex flex-col">
-                              <iframe
-                                src={currentFile.dataUrl}
-                                title={currentFile.name}
-                                className="w-full h-full border-none bg-white"
-                              />
-                            </div>
+                            <UniversalPdfViewer
+                              url={currentFile.dataUrl}
+                              fileName={currentFile.name}
+                            />
                           )}
 
                           {/* 2. Excel File Viewer (PDF-Look Conversion Table) */}
@@ -779,9 +780,9 @@ export const InfoView: React.FC<InfoViewProps> = ({
 
                           {/* 4. Other File types */}
                           {currentFile.type === 'other' && (
-                            <div className="text-center p-8 bg-white rounded-2xl border border-slate-200 max-w-sm">
-                              <FileCheck size={48} className="text-blue-500 mx-auto mb-3" />
-                              <h5 className="font-bold text-slate-800 mb-1">{currentFile.name}</h5>
+                            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-slate-900">
+                              <FileCheck size={48} className="text-blue-400 mx-auto mb-3" />
+                              <h5 className="font-bold text-slate-200 mb-1">{currentFile.name}</h5>
                               <p className="text-xs text-slate-400 mb-4">미리보기를 지원하지 않는 파일 형식입니다.</p>
                               <a
                                 href={currentFile.dataUrl}
@@ -940,35 +941,70 @@ const ExcelPdfLikeViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
 };
 
 // ============================================================================
-// Sub-Component: High Definition Image Viewer with Controls
+// Sub-Component: High Definition Image Viewer with Controls & Mouse Pan Drag
 // ============================================================================
 const ImageViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
   const [scale, setScale] = useState<number>(1);
   const [rotation, setRotation] = useState<number>(0);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [dragStart, setDragStart] = useState<{ x: number; y: number; scrollLeft: number; scrollTop: number }>({
+    x: 0,
+    y: 0,
+    scrollLeft: 0,
+    scrollTop: 0
+  });
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (!containerRef.current) return;
+    if (e.button !== 0) return; // Left mouse button only
+
+    setIsDragging(true);
+    setDragStart({
+      x: e.clientX,
+      y: e.clientY,
+      scrollLeft: containerRef.current.scrollLeft,
+      scrollTop: containerRef.current.scrollTop
+    });
+  };
+
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!isDragging || !containerRef.current) return;
+    e.preventDefault();
+
+    const dx = e.clientX - dragStart.x;
+    const dy = e.clientY - dragStart.y;
+
+    containerRef.current.scrollLeft = dragStart.scrollLeft - dx;
+    containerRef.current.scrollTop = dragStart.scrollTop - dy;
+  }, [isDragging, dragStart]);
+
+  const handleMouseUp = () => setIsDragging(false);
+  const handleMouseLeave = () => setIsDragging(false);
 
   return (
-    <div className="w-full h-full flex flex-col bg-slate-900 rounded-2xl overflow-hidden shadow-inner relative">
+    <div className="w-full h-full flex flex-col bg-slate-950 overflow-hidden relative select-none">
       {/* Zoom / Rotate Controls Bar */}
-      <div className="absolute top-3 right-3 z-10 flex items-center gap-1.5 bg-black/60 backdrop-blur-md p-1.5 rounded-xl text-white">
+      <div className="absolute top-3 right-3 z-10 flex items-center gap-1.5 bg-slate-900/90 backdrop-blur-md p-1.5 rounded-xl text-white border border-slate-800 shadow-xl">
         <button
-          onClick={() => setScale((s) => Math.max(0.5, s - 0.25))}
-          className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
+          onClick={() => setScale((s) => Math.max(0.4, Number((s - 0.25).toFixed(2))))}
+          className="p-1.5 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
           title="축소"
         >
           <ZoomOut size={16} />
         </button>
-        <span className="text-xs font-mono px-1">{Math.round(scale * 100)}%</span>
+        <span className="text-xs font-mono font-bold px-1.5">{Math.round(scale * 100)}%</span>
         <button
-          onClick={() => setScale((s) => Math.min(3, s + 0.25))}
-          className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"
+          onClick={() => setScale((s) => Math.min(4, Number((s + 0.25).toFixed(2))))}
+          className="p-1.5 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
           title="확대"
         >
           <ZoomIn size={16} />
         </button>
         <button
           onClick={() => setRotation((r) => (r + 90) % 360)}
-          className="p-1.5 hover:bg-white/20 rounded-lg transition-colors ml-1 border-l border-white/20 pl-2"
-          title="회전"
+          className="p-1.5 hover:bg-slate-800 rounded-lg transition-colors ml-1 border-l border-slate-700 pl-2 cursor-pointer"
+          title="90도 회전"
         >
           <RotateCw size={16} />
         </button>
@@ -976,26 +1012,47 @@ const ImageViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
           onClick={() => {
             setScale(1);
             setRotation(0);
+            if (containerRef.current) {
+              containerRef.current.scrollLeft = 0;
+              containerRef.current.scrollTop = 0;
+            }
           }}
-          className="px-2 py-1 text-[11px] font-bold hover:bg-white/20 rounded-lg transition-colors"
+          className="px-2 py-1 text-[11px] font-bold hover:bg-slate-800 rounded-lg transition-colors text-emerald-400 cursor-pointer"
         >
           초기화
         </button>
       </div>
 
-      {/* Image Container */}
-      <div className="flex-1 overflow-auto flex items-center justify-center p-4">
+      {/* Center Drag Guide for Desktop */}
+      <div className="absolute bottom-3 left-3 z-10 hidden md:flex items-center gap-1.5 text-xs text-slate-400 bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-lg border border-slate-800 pointer-events-none">
+        <Move size={13} className="text-emerald-400 animate-pulse" />
+        <span>마우스 좌클릭 드래그로 이동</span>
+      </div>
+
+      {/* Image Container with Left Click Drag */}
+      <div
+        ref={containerRef}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseLeave}
+        className={cn(
+          "flex-1 overflow-auto flex items-center justify-center p-4",
+          isDragging ? "cursor-grabbing" : "cursor-grab"
+        )}
+        style={{ touchAction: 'pan-x pan-y pinch-zoom' }}
+      >
         <img
           src={file.dataUrl}
           alt={file.name}
           style={{
             transform: `scale(${scale}) rotate(${rotation}deg)`,
-            transition: 'transform 0.2s ease-out',
-            maxHeight: '100%',
-            maxWidth: '100%',
+            transition: isDragging ? 'none' : 'transform 0.15s ease-out',
+            maxHeight: scale <= 1 ? '95%' : 'none',
+            maxWidth: scale <= 1 ? '95%' : 'none',
             objectFit: 'contain'
           }}
-          className="rounded-lg shadow-2xl select-none"
+          className="rounded-lg shadow-2xl pointer-events-none select-none"
         />
       </div>
     </div>
