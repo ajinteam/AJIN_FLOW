@@ -1325,11 +1325,14 @@ function Dashboard({ initialData, persistData, refreshData }: {
       {currentView === 'info' ? (
         <InfoView 
           infoProjects={infoProjects}
-          persistData={persistData}
+          onSaveProjects={async (updated) => {
+            await persistData({ infoProjects: updated });
+          }}
           isAdmin={isAdmin}
           userInitials={userInitials}
           showConfirm={showConfirm}
           showAlert={showAlert}
+          showPasswordPrompt={showPasswordPrompt}
         />
       ) : (
       <main className="p-2 max-w-[1800px] mx-auto">
