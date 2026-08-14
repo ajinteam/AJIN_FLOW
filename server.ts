@@ -9,7 +9,8 @@ import redis from "./src/lib/redis.ts";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const REDIS_KEY = "ajin_flow26_Backup";
+const REDIS_FLOW_KEY = "ajin_flow26_Backup";
+const REDIS_INFO_KEY = "ajin_info26";
 
 async function startServer() {
   const app = express();
@@ -75,7 +76,18 @@ async function startServer() {
       });
     }
     try {
-      const data: any = await redis.get(REDIS_KEY);
+      // Parallel fetch from both ajin_flow26_Backup and ajin_info26
+      const [flowDataRaw, infoDataRaw]: [any, any] = await Promise.all([
+        redis.get(REDIS_FLOW_KEY).catch((err) => {
+          console.warn(`Redis get ${REDIS_FLOW_KEY} error:`, err);
+          return null;
+        }),
+        redis.get(REDIS_INFO_KEY).catch((err) => {
+          console.warn(`Redis get ${REDIS_INFO_KEY} error:`, err);
+          return null;
+        })
+      ]);
+
       const defaults = {
         users: [],
         projects: [],
@@ -84,24 +96,47 @@ async function startServer() {
         processParts: [],
         infoProjects: []
       };
-      
-      if (!data) {
-        return res.json(defaults);
+
+      // Parse Flow data
+      let flowData: any = {};
+      if (flowDataRaw) {
+        if (typeof flowDataRaw === 'string') {
+          try { flowData = JSON.parse(flowDataRaw); } catch { flowData = {}; }
+        } else if (typeof flowDataRaw === 'object') {
+          flowData = flowDataRaw;
+        }
       }
 
-      // Merge with defaults to ensure all arrays exist
+      // Parse Info data
+      let infoProjectsList: any[] = [];
+      if (infoDataRaw) {
+        if (typeof infoDataRaw === 'string') {
+          try {
+            const parsed = JSON.parse(infoDataRaw);
+            infoProjectsList = Array.isArray(parsed) ? parsed : (parsed.infoProjects || []);
+          } catch {
+            infoProjectsList = [];
+          }
+        } else if (Array.isArray(infoDataRaw)) {
+          infoProjectsList = infoDataRaw;
+        } else if (typeof infoDataRaw === 'object') {
+          infoProjectsList = infoDataRaw.infoProjects || [];
+        }
+      } else if (flowData.infoProjects && Array.isArray(flowData.infoProjects)) {
+        // Fallback backward compatibility if infoProjects were previously in flowData
+        infoProjectsList = flowData.infoProjects;
+      }
+
       res.json({
-        ...defaults,
-        ...data
+        users: flowData.users || defaults.users,
+        projects: flowData.projects || defaults.projects,
+        processes: flowData.processes || defaults.processes,
+        tasks: flowData.tasks || defaults.tasks,
+        processParts: flowData.processParts || defaults.processParts,
+        infoProjects: infoProjectsList
       });
     } catch (error: any) {
       console.error("Redis fetch error:", error);
-      if (error?.message?.includes('WRONGTYPE')) {
-        const actualType = await redis.type(REDIS_KEY).catch(() => 'unknown');
-        return res.status(500).json({ 
-          error: `Redis key "${REDIS_KEY}" holds the wrong data type (${actualType}). Please delete or rename this key in your Upstash console and try again.` 
-        });
-      }
       res.status(500).json({ error: "Failed to fetch data from Redis" });
     }
   });
@@ -114,7 +149,24 @@ async function startServer() {
     }
     try {
       const data = req.body;
-      await redis.set(REDIS_KEY, data);
+      
+      // Separate Flow payload and Info payload
+      const flowPayload = {
+        users: data.users || [],
+        projects: data.projects || [],
+        processes: data.processes || [],
+        tasks: data.tasks || [],
+        processParts: data.processParts || []
+      };
+
+      const infoPayload = data.infoProjects || [];
+
+      // Save both to their dedicated keys in Upstash Redis
+      await Promise.all([
+        redis.set(REDIS_FLOW_KEY, flowPayload),
+        redis.set(REDIS_INFO_KEY, infoPayload)
+      ]);
+
       res.json({ success: true });
     } catch (error) {
       console.error("Redis save error:", error);
@@ -127,7 +179,10 @@ async function startServer() {
       return res.status(500).json({ error: "Redis configuration missing." });
     }
     try {
-      await redis.del(REDIS_KEY);
+      await Promise.all([
+        redis.del(REDIS_FLOW_KEY),
+        redis.del(REDIS_INFO_KEY)
+      ]);
       res.json({ success: true });
     } catch (error) {
       console.error("Redis reset error:", error);
