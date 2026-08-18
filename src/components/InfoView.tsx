@@ -29,6 +29,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { UniversalPdfViewer } from './UniversalPdfViewer';
+import { InAppExcelViewer } from './InAppExcelViewer';
 import { saveLocalFileBlob, getLocalFileBlob } from '../lib/storage';
 
 function cn(...inputs: any[]) {
@@ -251,14 +252,6 @@ export const InfoView: React.FC<InfoViewProps> = ({
   }, [isUploadModalOpen, isProjectModalOpen, viewerProject]);
 
   const openViewer = (project: InfoProject, fileIdx: number = 0) => {
-    // If project only has excel files or the clicked file is excel, launch directly
-    const targetFile = project.files?.[fileIdx];
-    if (targetFile && targetFile.type === 'excel' && (!project.files || project.files.length === 1)) {
-      openExcelDirectly(targetFile);
-      showAlert('엑셀 열람', `[${targetFile.name}] 기기 기본 엑셀 앱(Excel/스프레드시트)으로 바로 열었습니다.`, 'info');
-      return;
-    }
-
     try {
       window.history.pushState({ modal: 'info-viewer' }, '');
     } catch {}
@@ -901,22 +894,19 @@ export const InfoView: React.FC<InfoViewProps> = ({
                       문서 {fileCount}개
                     </span>
 
-                    {/* Direct Excel Open Button right on card */}
+                    {/* Direct Excel In-App Open Button right on card */}
                     {excelCount > 0 && (
                       <button
-                        onClick={async (e) => {
+                        onClick={(e) => {
                           e.stopPropagation();
-                          const firstExcel = (project.files || []).find((f) => f.type === 'excel');
-                          if (firstExcel) {
-                            await openExcelDirectly(firstExcel);
-                            showAlert('엑셀 열람', `[${firstExcel.name}] 기기 기본 엑셀 앱으로 바로 열었습니다.`, 'info');
-                          }
+                          const excelIdx = (project.files || []).findIndex((f) => f.type === 'excel');
+                          openViewer(project, excelIdx >= 0 ? excelIdx : 0);
                         }}
                         className="bg-emerald-800 hover:bg-emerald-700 active:scale-95 text-white px-2.5 py-1 rounded-lg text-[11px] font-black flex items-center gap-1.5 shadow-sm border border-emerald-600 transition-all cursor-pointer"
-                        title="기기 엑셀 앱(PC: Excel / 모바일: 스프레드시트)으로 즉시 열기"
+                        title="앱 화면에서 엑셀 시트 즉시 열람"
                       >
                         <FileSpreadsheet size={13} className="text-emerald-300" />
-                        <span>엑셀 열기 ({excelCount})</span>
+                        <span>엑셀 보기 ({excelCount})</span>
                       </button>
                     )}
 
@@ -1051,12 +1041,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
                       >
                         <button
                           onClick={() => {
-                            if (file.type === 'excel') {
-                              openExcelDirectly(file);
-                              showAlert('엑셀 열람', `[${file.name}] 기기 기본 엑셀 앱으로 바로 열었습니다.`, 'info');
-                            } else {
-                              setActiveFileIndex(idx);
-                            }
+                            setActiveFileIndex(idx);
                           }}
                           className="flex items-center gap-1.5 max-w-[160px] md:max-w-[220px] truncate cursor-pointer text-left"
                         >
@@ -1065,9 +1050,6 @@ export const InfoView: React.FC<InfoViewProps> = ({
                           {file.type === 'image' && <ImageIcon size={14} className="text-amber-400 shrink-0" />}
                           {file.type === 'other' && <FileCheck size={14} className="text-blue-400 shrink-0" />}
                           <span className="truncate">{file.name}</span>
-                          {file.type === 'excel' && (
-                            <span className="text-[10px] text-emerald-400 bg-emerald-950 px-1 py-0.2 rounded">앱 실행</span>
-                          )}
                         </button>
 
                         {/* File Position Order Adjusters (Left / Right) */}
@@ -1159,27 +1141,13 @@ export const InfoView: React.FC<InfoViewProps> = ({
 
                         {/* Rendering by Type */}
                         <div className="flex-1 overflow-hidden flex flex-col">
-                          {/* 1. Excel File Prompt Box (Direct Launch) */}
+                          {/* 1. Excel File In-App Viewer (Instant Sheet Tabs & Grid with Zero Download) */}
                           {currentFile.type === 'excel' && (
-                            <div className="flex-1 flex flex-col items-center justify-center p-8 bg-slate-950 text-center">
-                              <div className="w-16 h-16 bg-emerald-950/80 text-emerald-400 rounded-3xl flex items-center justify-center mb-4 border border-emerald-800 shadow-xl">
-                                <FileSpreadsheet size={36} />
-                              </div>
-                              <h4 className="text-lg font-black text-white mb-1.5">{currentFile.name}</h4>
-                              <p className="text-xs text-slate-400 max-w-sm mb-6 leading-relaxed">
-                                PC는 Microsoft Excel, 모바일은 구글 스프레드시트/Excel 앱으로 바로 열립니다.
-                              </p>
-                              <button
-                                onClick={async () => {
-                                  await openExcelDirectly(currentFile);
-                                  showAlert('엑셀 열람', `[${currentFile.name}] 기기 기본 엑셀 앱으로 바로 열었습니다.`, 'info');
-                                }}
-                                className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-black text-sm rounded-2xl shadow-lg shadow-emerald-900/50 flex items-center gap-2 cursor-pointer transition-all"
-                              >
-                                <ExternalLink size={18} />
-                                <span>기기 엑셀 앱으로 바로 열기</span>
-                              </button>
-                            </div>
+                            <InAppExcelViewer
+                              fileId={currentFile.id}
+                              dataUrl={currentFile.dataUrl}
+                              fileName={currentFile.name}
+                            />
                           )}
 
                           {/* 2. PDF File Viewer (Zero-Lag, Lightweight & Smooth) */}

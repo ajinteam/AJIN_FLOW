@@ -6,7 +6,6 @@ import {
   RotateCw, 
   ChevronLeft, 
   ChevronRight, 
-  Move, 
   Loader2, 
   AlertCircle,
   Search,
@@ -14,7 +13,9 @@ import {
   ArrowUp,
   ArrowDown,
   RefreshCw,
-  Maximize2
+  Maximize2,
+  List,
+  Columns
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -23,9 +24,9 @@ function cn(...inputs: any[]) {
   return twMerge(clsx(inputs));
 }
 
-// Configure pdfjs worker with reliable fast CDN
+// Configure pdfjs worker dynamically matching the installed version
 try {
-  if (typeof window !== 'undefined' && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
+  if (typeof window !== 'undefined') {
     const version = pdfjsLib.version || '4.10.38';
     pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
   }
@@ -68,12 +69,12 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
   const [pdfDoc, setPdfDoc] = useState<any>(null);
   const [numPages, setNumPages] = useState<number>(0);
   const [currentPage, setCurrentPage] = useState<number>(initialPage || 1);
-  const [scale, setScale] = useState<number>(1.0);
+  const [scale, setScale] = useState<number>(1.1);
   const [rotation, setRotation] = useState<number>(0);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [useIframeFallback, setUseIframeFallback] = useState<boolean>(false);
-  const [viewMode, setViewMode] = useState<'single' | 'continuous'>('single');
+  const [showSidebar, setShowSidebar] = useState<boolean>(true);
 
   // Search in Document state
   const [isSearchOpen, setIsSearchOpen] = useState<boolean>(!!initialSearchQuery);
@@ -82,8 +83,11 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
   const [selectedResultIdx, setSelectedResultIdx] = useState<number>(0);
   const [searching, setSearching] = useState<boolean>(false);
 
-  // Drag / Pan & Touch Pinch State
-  const containerRef = useRef<HTMLDivElement>(null);
+  // Main scroll container ref
+  const mainScrollRef = useRef<HTMLDivElement>(null);
+  const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+
+  // Drag / Pan State
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number; scrollLeft: number; scrollTop: number }>({
     x: 0,
@@ -92,12 +96,12 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
     scrollTop: 0
   });
 
-  // Touch gesture tracking for mobile pinch-to-zoom and pan
+  // Touch gesture tracking for mobile pinch-to-zoom
   const touchStartDistRef = useRef<number | null>(null);
   const touchStartScaleRef = useRef<number>(scale);
   const lastTapRef = useRef<number>(0);
 
-  // Load PDF Document safely & quickly
+  // Load PDF Document safely & quickly with fallbacks
   useEffect(() => {
     let isMounted = true;
     setLoading(true);
@@ -129,6 +133,7 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
         }
 
         if (!loadingTask) {
+          // If URL is relative or blob or external
           loadingTask = pdfjsLib.getDocument({
             url,
             cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/cmaps/',
@@ -159,18 +164,19 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
     };
   }, [url, initialPage]);
 
-  // Adjust default scale based on container width
+  // Adjust default scale and sidebar visibility on mobile
   useEffect(() => {
-    if (containerRef.current) {
-      const containerWidth = containerRef.current.clientWidth;
-      if (containerWidth < 640) {
+    if (typeof window !== 'undefined') {
+      const isMobile = window.innerWidth < 768;
+      if (isMobile) {
         setScale(1.0);
-        setViewMode('single'); // Mobile default to single page for 0-lag and no crash
+        setShowSidebar(false); // Mobile defaults to hidden sidebar for wider view
       } else {
-        setScale(1.2);
+        setScale(1.15);
+        setShowSidebar(true);
       }
     }
-  }, [loading]);
+  }, []);
 
   // Search inside PDF Document across all pages
   const performSearch = useCallback(async (query: string, doc: any) => {
@@ -208,7 +214,7 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
       setSearchResults(results);
       setSelectedResultIdx(0);
       if (results.length > 0) {
-        setCurrentPage(results[0].page);
+        scrollToPage(results[0].page);
       }
     } catch (err) {
       console.error('PDF Search error:', err);
@@ -223,45 +229,72 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
     }
   }, [pdfDoc, searchQuery, performSearch]);
 
-  const goToPage = (pageNum: number) => {
+  // Smooth Scroll to page
+  const scrollToPage = (pageNum: number) => {
     const clamped = Math.max(1, Math.min(pageNum, numPages || 1));
     setCurrentPage(clamped);
+
+    const el = pageRefs.current.get(clamped);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
+  // Track active page while scrolling continuous feed
+  const handleScroll = () => {
+    if (!mainScrollRef.current) return;
+    const containerTop = mainScrollRef.current.scrollTop;
+    const containerHeight = mainScrollRef.current.clientHeight;
+
+    for (let p = 1; p <= numPages; p++) {
+      const el = pageRefs.current.get(p);
+      if (el) {
+        const offsetTop = el.offsetTop - 80;
+        const offsetBottom = offsetTop + el.clientHeight;
+        if (containerTop + containerHeight / 3 >= offsetTop && containerTop + containerHeight / 3 <= offsetBottom) {
+          if (currentPage !== p) {
+            setCurrentPage(p);
+          }
+          break;
+        }
+      }
+    }
   };
 
   const handleNextSearch = () => {
     if (searchResults.length === 0) return;
     const nextIdx = (selectedResultIdx + 1) % searchResults.length;
     setSelectedResultIdx(nextIdx);
-    goToPage(searchResults[nextIdx].page);
+    scrollToPage(searchResults[nextIdx].page);
   };
 
   const handlePrevSearch = () => {
     if (searchResults.length === 0) return;
     const prevIdx = (selectedResultIdx - 1 + searchResults.length) % searchResults.length;
     setSelectedResultIdx(prevIdx);
-    goToPage(searchResults[prevIdx].page);
+    scrollToPage(searchResults[prevIdx].page);
   };
 
   // Mouse pan handling
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (!containerRef.current) return;
+    if (!mainScrollRef.current) return;
     if ((e.target as HTMLElement).tagName === 'BUTTON' || (e.target as HTMLElement).tagName === 'INPUT') return;
     setIsDragging(true);
     setDragStart({
       x: e.clientX,
       y: e.clientY,
-      scrollLeft: containerRef.current.scrollLeft,
-      scrollTop: containerRef.current.scrollTop
+      scrollLeft: mainScrollRef.current.scrollLeft,
+      scrollTop: mainScrollRef.current.scrollTop
     });
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
-    if (!isDragging || !containerRef.current) return;
+    if (!isDragging || !mainScrollRef.current) return;
     e.preventDefault();
     const dx = e.clientX - dragStart.x;
     const dy = e.clientY - dragStart.y;
-    containerRef.current.scrollLeft = dragStart.scrollLeft - dx;
-    containerRef.current.scrollTop = dragStart.scrollTop - dy;
+    mainScrollRef.current.scrollLeft = dragStart.scrollLeft - dx;
+    mainScrollRef.current.scrollTop = dragStart.scrollTop - dy;
   };
 
   const handleMouseUp = () => setIsDragging(false);
@@ -278,7 +311,7 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
     } else if (e.touches.length === 1) {
       const now = Date.now();
       if (now - lastTapRef.current < 300) {
-        setScale((prev) => (prev > 1.2 ? 1.0 : 2.0));
+        setScale((prev) => (prev > 1.2 ? 1.0 : 1.8));
       }
       lastTapRef.current = now;
     }
@@ -291,7 +324,7 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
         e.touches[0].clientY - e.touches[1].clientY
       );
       const ratio = dist / touchStartDistRef.current;
-      const newScale = Math.min(Math.max(0.6, touchStartScaleRef.current * ratio), 4.0);
+      const newScale = Math.min(Math.max(0.6, touchStartScaleRef.current * ratio), 3.5);
       setScale(Number(newScale.toFixed(2)));
     }
   };
@@ -300,13 +333,13 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
     touchStartDistRef.current = null;
   };
 
-  const handleZoomIn = () => setScale((s) => Math.min(Number((s + 0.25).toFixed(2)), 4.0));
-  const handleZoomOut = () => setScale((s) => Math.max(Number((s - 0.25).toFixed(2)), 0.5));
+  const handleZoomIn = () => setScale((s) => Math.min(Number((s + 0.2).toFixed(2)), 3.5));
+  const handleZoomOut = () => setScale((s) => Math.max(Number((s - 0.2).toFixed(2)), 0.5));
   const handleRotate = () => setRotation((r) => (r + 90) % 360);
   const handleFitWidth = () => {
-    if (containerRef.current) {
-      const containerWidth = containerRef.current.clientWidth;
-      const targetScale = containerWidth < 640 ? 1.0 : 1.2;
+    if (mainScrollRef.current) {
+      const containerWidth = mainScrollRef.current.clientWidth - (showSidebar ? 180 : 20);
+      const targetScale = containerWidth < 500 ? 0.95 : 1.2;
       setScale(targetScale);
     }
   };
@@ -318,7 +351,7 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
         <div className="bg-slate-900 border-b border-slate-800 px-3 py-2 flex items-center justify-between text-xs text-slate-300">
           <div className="flex items-center gap-2 truncate">
             <span className="font-bold text-white truncate">{fileName}</span>
-            <span className="bg-emerald-800/80 text-emerald-200 px-2 py-0.5 rounded text-[11px] font-bold">PDF 도면 뷰어</span>
+            <span className="bg-emerald-800/80 text-emerald-200 px-2 py-0.5 rounded text-[11px] font-bold">PDF 도면</span>
           </div>
         </div>
         <div className="flex-1 w-full h-full bg-white">
@@ -336,8 +369,20 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
     <div className="flex flex-col w-full h-full bg-slate-950 text-slate-100 overflow-hidden select-none">
       {/* 1. Main PDF Control Toolbar */}
       <div className="bg-slate-900 border-b border-slate-800 px-2.5 md:px-4 py-2 flex items-center justify-between gap-1.5 md:gap-3 flex-wrap shrink-0">
-        {/* Left: Page Navigator */}
+        {/* Left: Sidebar Toggle & Page Indicator */}
         <div className="flex items-center gap-1.5 md:gap-3 shrink-0">
+          <button
+            onClick={() => setShowSidebar(!showSidebar)}
+            className={cn(
+              "flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-bold transition-all border cursor-pointer",
+              showSidebar ? "bg-emerald-600 text-white border-emerald-500" : "bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700"
+            )}
+            title="좌측 연속 페이지 목록 토글"
+          >
+            <List size={14} />
+            <span className="hidden sm:inline">목록 ({numPages || 1})</span>
+          </button>
+
           <div className="flex items-center gap-1 bg-slate-800 px-2.5 py-1 rounded-xl border border-slate-700 text-xs font-mono font-bold">
             <span className="text-emerald-400">{currentPage}</span>
             <span className="text-slate-500">/</span>
@@ -346,7 +391,7 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
 
           <div className="flex items-center gap-0.5">
             <button
-              onClick={() => goToPage(currentPage - 1)}
+              onClick={() => scrollToPage(currentPage - 1)}
               disabled={currentPage <= 1 || loading}
               className="p-1.5 text-slate-300 hover:bg-slate-800 disabled:opacity-30 rounded-lg transition-colors cursor-pointer"
               title="이전 페이지"
@@ -354,34 +399,12 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
               <ChevronLeft size={16} />
             </button>
             <button
-              onClick={() => goToPage(currentPage + 1)}
+              onClick={() => scrollToPage(currentPage + 1)}
               disabled={currentPage >= numPages || loading}
               className="p-1.5 text-slate-300 hover:bg-slate-800 disabled:opacity-30 rounded-lg transition-colors cursor-pointer"
               title="다음 페이지"
             >
               <ChevronRight size={16} />
-            </button>
-          </div>
-
-          {/* View Mode Toggle */}
-          <div className="hidden sm:flex items-center bg-slate-800 p-0.5 rounded-lg border border-slate-700 text-xs">
-            <button
-              onClick={() => setViewMode('single')}
-              className={cn(
-                'px-2 py-0.5 rounded-md font-bold transition-all cursor-pointer',
-                viewMode === 'single' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
-              )}
-            >
-              1쪽씩 보기
-            </button>
-            <button
-              onClick={() => setViewMode('continuous')}
-              className={cn(
-                'px-2 py-0.5 rounded-md font-bold transition-all cursor-pointer',
-                viewMode === 'continuous' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
-              )}
-            >
-              연속 보기
             </button>
           </div>
         </div>
@@ -398,7 +421,8 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
             )}
           >
             <Search size={13} />
-            <span>도면 내 단어 검색</span>
+            <span className="hidden sm:inline">도면 내 단어 검색</span>
+            <span className="sm:hidden">검색</span>
             {searchResults.length > 0 && (
               <span className="bg-amber-500 text-slate-950 px-1.5 py-0.2 rounded-full text-[10px] font-black">
                 {searchResults.length}
@@ -508,129 +532,132 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
         </div>
       )}
 
-      {/* 3. Document Canvas Area with Touch Gestures */}
-      <div
-        ref={containerRef}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
-        className={cn(
-          "flex-1 overflow-auto bg-slate-950 relative p-1 md:p-6 flex flex-col",
-          isDragging ? "cursor-grabbing select-none" : "cursor-grab"
-        )}
-        style={{ touchAction: 'pan-x pan-y pinch-zoom' }}
-      >
-        {/* Loading Spinner */}
-        {loading && (
-          <div className="m-auto flex flex-col items-center justify-center p-8 text-center text-slate-400">
-            <Loader2 size={36} className="animate-spin text-emerald-400 mb-3" />
-            <p className="text-sm font-bold text-slate-200">PDF 도면 불러오는 중...</p>
-            <p className="text-xs text-slate-500 mt-1">고속 메모리 최적화 렌더링</p>
+      {/* 3. Main Viewer Layout (Sidebar Thumbnails + Continuous Continuous Feed) */}
+      <div className="flex-1 flex overflow-hidden relative">
+        {/* Left: Continuous Thumbnails Sidebar */}
+        {showSidebar && pdfDoc && (
+          <div className="w-28 sm:w-36 md:w-44 bg-slate-900 border-r border-slate-800 flex flex-col shrink-0 overflow-y-auto p-2 gap-2.5 select-none no-scrollbar">
+            <div className="text-[11px] font-bold text-slate-400 px-1 flex items-center justify-between sticky top-0 bg-slate-900/90 py-1 z-10">
+              <span>연속 페이지 ({numPages})</span>
+              <button onClick={() => setShowSidebar(false)} className="text-slate-500 hover:text-white p-0.5">
+                <X size={12} />
+              </button>
+            </div>
+
+            {Array.from({ length: numPages }, (_, i) => i + 1).map((pNum) => {
+              const isSelected = pNum === currentPage;
+              const hasSearchMatch = searchResults.some((r) => r.page === pNum);
+
+              return (
+                <button
+                  key={pNum}
+                  onClick={() => scrollToPage(pNum)}
+                  className={cn(
+                    "flex flex-col items-center p-1.5 rounded-xl border transition-all cursor-pointer text-left w-full",
+                    isSelected
+                      ? "bg-emerald-950/80 border-emerald-500 ring-2 ring-emerald-500 shadow-md"
+                      : "bg-slate-950/60 border-slate-800 hover:bg-slate-800 hover:border-slate-700"
+                  )}
+                >
+                  <div className="w-full aspect-[1/1.4] bg-white rounded flex items-center justify-center overflow-hidden relative mb-1 shadow-xs">
+                    <PdfPageThumbnail
+                      pdfDoc={pdfDoc}
+                      pageNum={pNum}
+                    />
+                    {hasSearchMatch && (
+                      <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-amber-400 rounded-full ring-2 ring-black" />
+                    )}
+                  </div>
+                  <span className={cn(
+                    "text-[10px] font-mono font-bold",
+                    isSelected ? "text-emerald-300" : "text-slate-400"
+                  )}>
+                    {pNum} 쪽
+                  </span>
+                </button>
+              );
+            })}
           </div>
         )}
 
-        {/* Error Fallback */}
-        {error && (
-          <div className="m-auto flex flex-col items-center justify-center p-8 text-center max-w-md bg-slate-900/80 rounded-2xl border border-slate-800">
-            <AlertCircle size={40} className="text-rose-400 mb-3" />
-            <h4 className="text-base font-bold text-white mb-1">도면을 표시할 수 없습니다</h4>
-            <p className="text-xs text-slate-400 mb-4">{error}</p>
-            <button
-              onClick={() => setUseIframeFallback(true)}
-              className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-2 cursor-pointer mb-2"
-            >
-              <RefreshCw size={14} />
-              <span>직접 뷰어로 전환</span>
-            </button>
-          </div>
-        )}
+        {/* Right: Full Continuous Document Canvas Area */}
+        <div
+          ref={mainScrollRef}
+          onScroll={handleScroll}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          className={cn(
+            "flex-1 overflow-auto bg-slate-950 relative p-2 md:p-6",
+            isDragging ? "cursor-grabbing select-none" : "cursor-grab"
+          )}
+          style={{ touchAction: 'pan-x pan-y pinch-zoom' }}
+        >
+          {/* Loading Spinner */}
+          {loading && (
+            <div className="h-full flex flex-col items-center justify-center p-8 text-center text-slate-400">
+              <Loader2 size={36} className="animate-spin text-emerald-400 mb-3" />
+              <p className="text-sm font-bold text-slate-200">PDF 도면 불러오는 중...</p>
+              <p className="text-xs text-slate-500 mt-1">고속 연속 뷰어 렌더링</p>
+            </div>
+          )}
 
-        {/* Render PDF Page with `m-auto` so zoom-in will NOT cut left edge */}
-        {!loading && !error && pdfDoc && (
-          <div className="m-auto inline-flex flex-col items-center gap-4 md:gap-8 min-w-fit min-h-fit py-1">
-            {viewMode === 'continuous' ? (
-              // Continuous mode: render visible pages near current page to prevent memory overflow
-              Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => {
+          {/* Error Fallback */}
+          {error && (
+            <div className="h-full flex flex-col items-center justify-center p-8 text-center max-w-md mx-auto bg-slate-900/80 rounded-2xl border border-slate-800">
+              <AlertCircle size={40} className="text-rose-400 mb-3" />
+              <h4 className="text-base font-bold text-white mb-1">도면을 표시할 수 없습니다</h4>
+              <p className="text-xs text-slate-400 mb-4">{error}</p>
+              <button
+                onClick={() => setUseIframeFallback(true)}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-2 cursor-pointer mb-2"
+              >
+                <RefreshCw size={14} />
+                <span>직접 뷰어로 전환</span>
+              </button>
+            </div>
+          )}
+
+          {/* Continuous Document Pages (Render with immediate zero-blank loading) */}
+          {!loading && !error && pdfDoc && (
+            <div className="m-auto inline-flex flex-col items-center gap-6 md:gap-10 min-w-fit min-h-fit py-2">
+              {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => {
                 const isCurrentMatched = searchResults[selectedResultIdx]?.page === pageNum;
-                // Only render pages close to current page or all if small document
-                const isClose = numPages <= 10 || Math.abs(pageNum - currentPage) <= 2;
 
                 return (
                   <div
                     key={pageNum}
+                    ref={(el) => {
+                      if (el) pageRefs.current.set(pageNum, el);
+                      else pageRefs.current.delete(pageNum);
+                    }}
                     className={cn(
                       "transition-all duration-200 rounded-sm",
                       isCurrentMatched && "ring-4 ring-amber-400 shadow-2xl scale-[1.01]"
                     )}
                   >
-                    {isClose ? (
-                      <PdfPageCanvas
-                        pdfDoc={pdfDoc}
-                        pageNum={pageNum}
-                        scale={scale}
-                        rotation={rotation}
-                      />
-                    ) : (
-                      <div 
-                        className="bg-slate-900 border border-slate-800 rounded flex items-center justify-center text-slate-500 text-xs"
-                        style={{ width: '400px', height: '500px' }}
-                      >
-                        P.{pageNum} 스크롤 시 로드됨
-                      </div>
-                    )}
+                    <PdfPageCanvas
+                      pdfDoc={pdfDoc}
+                      pageNum={pageNum}
+                      scale={scale}
+                      rotation={rotation}
+                    />
                   </div>
                 );
-              })
-            ) : (
-              // Single page mode (fastest, lowest memory, 0 crash on mobile)
-              <div>
-                <PdfPageCanvas
-                  pdfDoc={pdfDoc}
-                  pageNum={currentPage}
-                  scale={scale}
-                  rotation={rotation}
-                />
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* 4. Bottom Quick Page Stepper for Single Page Mode on Mobile */}
-      {!loading && !error && pdfDoc && viewMode === 'single' && numPages > 1 && (
-        <div className="bg-slate-900 border-t border-slate-800 px-3 py-1.5 flex items-center justify-between text-xs shrink-0">
-          <button
-            onClick={() => goToPage(currentPage - 1)}
-            disabled={currentPage <= 1}
-            className="flex items-center gap-1 px-3 py-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-white rounded-lg font-bold cursor-pointer"
-          >
-            <ChevronLeft size={14} />
-            <span>이전 쪽</span>
-          </button>
-
-          <span className="text-slate-300 font-mono font-bold text-xs">
-            {currentPage} / {numPages}쪽
-          </span>
-
-          <button
-            onClick={() => goToPage(currentPage + 1)}
-            disabled={currentPage >= numPages}
-            className="flex items-center gap-1 px-3 py-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-white rounded-lg font-bold cursor-pointer"
-          >
-            <span>다음 쪽</span>
-            <ChevronRight size={14} />
-          </button>
+              })}
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 };
 
-// Sub-Component: Individual Page Canvas Renderer with memory management
+// Sub-Component: Page Canvas Renderer (Optimized & Reliable)
 interface PdfPageCanvasProps {
   pdfDoc: any;
   pageNum: number;
@@ -669,8 +696,8 @@ const PdfPageCanvas: React.FC<PdfPageCanvasProps> = ({ pdfDoc, pageNum, scale, r
         const context = canvas.getContext('2d', { alpha: false });
         if (!context) return;
 
-        // Cap pixel ratio at 1.5 on mobile to avoid high canvas memory usage
-        const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.75);
+        // Cap pixel ratio to 1.5 for memory safety and crispness
+        const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
         canvas.width = Math.floor(viewport.width * pixelRatio);
         canvas.height = Math.floor(viewport.height * pixelRatio);
         canvas.style.width = `${Math.floor(viewport.width)}px`;
@@ -713,13 +740,63 @@ const PdfPageCanvas: React.FC<PdfPageCanvasProps> = ({ pdfDoc, pageNum, scale, r
     <div className="relative shadow-2xl rounded-sm overflow-hidden bg-white border border-slate-700/80 max-w-full">
       <canvas ref={canvasRef} className="block pointer-events-none max-w-none" />
       {rendering && (
-        <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center">
+        <div className="absolute inset-0 bg-slate-900/30 backdrop-blur-xs flex items-center justify-center">
           <Loader2 size={24} className="animate-spin text-emerald-400" />
         </div>
       )}
-      <div className="absolute bottom-2 right-2 bg-black/70 backdrop-blur-xs text-[10px] text-white font-mono px-2 py-0.5 rounded pointer-events-none border border-white/10">
+      <div className="absolute bottom-2 right-2 bg-black/75 backdrop-blur-xs text-[10px] text-white font-mono px-2 py-0.5 rounded pointer-events-none border border-white/10">
         P.{pageNum}
       </div>
     </div>
+  );
+};
+
+// Sub-Component: Thumbnail for Left Continuous List
+const PdfPageThumbnail: React.FC<{ pdfDoc: any; pageNum: number }> = ({ pdfDoc, pageNum }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const renderThumb = async () => {
+      if (!pdfDoc || !canvasRef.current) return;
+      try {
+        const page = await pdfDoc.getPage(pageNum);
+        if (isCancelled) return;
+
+        const viewport = page.getViewport({ scale: 0.2 });
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+
+        const context = canvas.getContext('2d');
+        if (!context) return;
+
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+
+        await page.render({ canvasContext: context, viewport }).promise;
+        if (!isCancelled) setLoaded(true);
+      } catch {
+        // Thumbnail load fallback
+      }
+    };
+
+    renderThumb();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [pdfDoc, pageNum]);
+
+  return (
+    <>
+      <canvas ref={canvasRef} className="w-full h-full object-contain pointer-events-none" />
+      {!loaded && (
+        <div className="absolute inset-0 bg-slate-800 flex items-center justify-center text-[10px] text-slate-500 font-mono">
+          {pageNum}
+        </div>
+      )}
+    </>
   );
 };
