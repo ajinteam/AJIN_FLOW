@@ -522,26 +522,55 @@ export const InfoView: React.FC<InfoViewProps> = ({
         }
 
         // 1. Upload binary file directly to server uploads folder
-        const formData = new FormData();
-        formData.append('file', fileBlob, file.name);
+        let savedUrl = '';
+        try {
+          const formData = new FormData();
+          formData.append('file', fileBlob, file.name);
 
-        const uploadRes = await fetch('/api/upload-file', {
-          method: 'POST',
-          body: formData
-        });
+          const uploadRes = await fetch('/api/upload-file', {
+            method: 'POST',
+            body: formData
+          });
 
-        if (!uploadRes.ok) {
-          const errBody = await uploadRes.json().catch(() => ({}));
-          throw new Error(errBody.error || `서버 업로드 오류 (${uploadRes.status})`);
+          if (uploadRes.ok) {
+            const uploadJson = await uploadRes.json();
+            if (uploadJson.success && uploadJson.url) {
+              savedUrl = uploadJson.url;
+              fileSize = uploadJson.size || fileSize;
+            }
+          }
+        } catch (formErr) {
+          console.warn('FormData upload attempt:', formErr);
         }
 
-        const uploadJson = await uploadRes.json();
-        if (!uploadJson.success || !uploadJson.url) {
-          throw new Error(uploadJson.error || '업로드 URL 생성 실패');
+        // Fallback: If FormData upload failed or returned non-200, use JSON Base64 upload to server
+        if (!savedUrl) {
+          try {
+            const base64Data = await readFileAsDataUrl(fileBlob);
+            const jsonRes = await fetch('/api/upload-file', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                filename: file.name,
+                base64: base64Data
+              })
+            });
+
+            if (jsonRes.ok) {
+              const jsonResult = await jsonRes.json();
+              if (jsonResult.success && jsonResult.url) {
+                savedUrl = jsonResult.url;
+                fileSize = jsonResult.size || fileSize;
+              }
+            }
+          } catch (jsonErr) {
+            console.warn('JSON upload attempt:', jsonErr);
+          }
         }
 
-        const savedUrl = uploadJson.url;
-        fileSize = uploadJson.size || fileSize;
+        if (!savedUrl) {
+          throw new Error('서버 파일 저장에 실패했습니다. 다시 시도해주세요.');
+        }
 
         // 2. Cache raw Blob locally in IndexedDB for instant zero-latency loading
         try {

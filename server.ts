@@ -40,8 +40,8 @@ async function startServer() {
   // CORS & Preflight handling
   app.use((req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
-    res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+    res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
+    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, X-File-Name");
     if (req.method === "OPTIONS") {
       return res.sendStatus(200);
     }
@@ -74,6 +74,17 @@ async function startServer() {
     storage,
     limits: { fileSize: 100 * 1024 * 1024 } // 100MB per file limit
   });
+
+  // Safe wrapper for multer middleware so errors NEVER fall through to Vite
+  const handleUploadMiddleware = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    upload.single('file')(req, res, (err) => {
+      if (err) {
+        console.error("Multer upload error:", err);
+        return res.status(400).json({ success: false, error: err.message || "파일 업로드 처리 오류" });
+      }
+      next();
+    });
+  };
 
   // Serve uploaded files explicitly with Unicode and UTF-8 header support
   app.get('/uploads/:filename', (req, res) => {
@@ -130,15 +141,10 @@ async function startServer() {
     res.json({ status: "ok", env: process.env.NODE_ENV });
   });
 
-  // Direct Binary File Upload Endpoint
-  app.all("/api/upload-file", upload.single('file'), async (req, res) => {
-    if (req.method === "OPTIONS") {
-      return res.sendStatus(200);
-    }
-    if (req.method === "GET") {
-      return res.json({ status: "ready" });
-    }
+  // Direct Binary & Multipart File Upload Endpoint
+  const handleFileUploadRoute = async (req: express.Request, res: express.Response) => {
     try {
+      // 1. Multipart/form-data upload via Multer
       if (req.file) {
         const cleanName = safeCleanFilename(req.file.originalname);
         const fileUrl = `/uploads/${encodeURIComponent(req.file.filename)}`;
@@ -151,7 +157,7 @@ async function startServer() {
         });
       }
 
-      // Fallback for base64 JSON payload
+      // 2. Base64 JSON payload fallback
       const { filename, base64 } = req.body || {};
       if (filename && base64) {
         const cleanBase64 = base64.replace(/^data:.*?;base64,/, '');
@@ -173,14 +179,23 @@ async function startServer() {
         });
       }
 
-      return res.status(400).json({ success: false, error: "전송된 파일이 없습니다." });
+      return res.status(400).json({ success: false, error: "전송된 파일 내용이 없습니다." });
     } catch (error: any) {
       console.error("File upload error:", error);
-      res.status(500).json({ success: false, error: error.message || "Upload failed" });
+      return res.status(500).json({ success: false, error: error.message || "Upload failed" });
     }
-  });
+  };
 
-  // API routes
+  // Register both GET/POST/ALL on multiple endpoints to prevent 405 on any client call
+  app.get("/api/upload-file", (req, res) => res.json({ status: "ready" }));
+  app.post("/api/upload-file", handleUploadMiddleware, handleFileUploadRoute);
+  app.put("/api/upload-file", handleUploadMiddleware, handleFileUploadRoute);
+
+  app.get("/api/upload", (req, res) => res.json({ status: "ready" }));
+  app.post("/api/upload", handleUploadMiddleware, handleFileUploadRoute);
+  app.put("/api/upload", handleUploadMiddleware, handleFileUploadRoute);
+
+  // API routes for data fetching & saving
   app.get("/api/data", async (req, res) => {
     if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) {
       return res.status(500).json({ 
@@ -235,7 +250,6 @@ async function startServer() {
           infoProjectsList = infoDataRaw.infoProjects || [];
         }
       } else if (flowData.infoProjects && Array.isArray(flowData.infoProjects)) {
-        // Fallback backward compatibility if infoProjects were previously in flowData
         infoProjectsList = flowData.infoProjects;
       }
 
@@ -360,6 +374,11 @@ async function startServer() {
       console.error("Redis reset error:", error);
       res.status(500).json({ error: "Failed to reset Redis data" });
     }
+  });
+
+  // Catch-all for API routes so unhandled API endpoints NEVER fall through to Vite (prevents Vite 405 error)
+  app.all('/api/*', (req, res) => {
+    res.status(404).json({ error: `API endpoint not found: ${req.method} ${req.path}` });
   });
 
   // Vite middleware for development
