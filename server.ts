@@ -207,12 +207,43 @@ async function startServer() {
         processParts: data.processParts || []
       };
 
-      const infoPayload = data.infoProjects || [];
+      // Sanitize infoProjects: Convert any large base64 dataUrl into local file URLs to keep Redis ultra-lightweight (< 100KB)
+      let infoProjectsList = Array.isArray(data.infoProjects) ? data.infoProjects : [];
+      infoProjectsList = await Promise.all(infoProjectsList.map(async (project: any) => {
+        if (!project.files || !Array.isArray(project.files)) return project;
+        
+        const cleanFiles = await Promise.all(project.files.map(async (file: any) => {
+          if (file.dataUrl && typeof file.dataUrl === 'string' && file.dataUrl.startsWith('data:')) {
+            try {
+              const cleanBase64 = file.dataUrl.replace(/^data:.*?;base64,/, '');
+              const buffer = Buffer.from(cleanBase64, 'base64');
+              const timestamp = Date.now();
+              const sanitizedName = (file.name || 'file').replace(/[^a-zA-Z0-9._가-힣-]/g, '_');
+              const savedFileName = `${timestamp}_${sanitizedName}`;
+              const filePath = path.join(uploadsDir, savedFileName);
+              await fs.promises.writeFile(filePath, buffer);
+              return {
+                ...file,
+                dataUrl: `/uploads/${encodeURIComponent(savedFileName)}`
+              };
+            } catch (convErr) {
+              console.warn('Failed to convert base64 to file:', convErr);
+              return file;
+            }
+          }
+          return file;
+        }));
+
+        return {
+          ...project,
+          files: cleanFiles
+        };
+      }));
 
       // Save both to their dedicated keys in Upstash Redis
       await Promise.all([
         redis.set(REDIS_FLOW_KEY, flowPayload),
-        redis.set(REDIS_INFO_KEY, infoPayload)
+        redis.set(REDIS_INFO_KEY, infoProjectsList)
       ]);
 
       res.json({ success: true });

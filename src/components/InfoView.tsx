@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { InfoProject, InfoFile } from '../types';
 import { 
   FileText, 
@@ -25,8 +25,11 @@ import {
   Move,
   AlertCircle,
   ArrowUpDown,
-  Filter,
-  ArrowRight
+  ArrowRight,
+  Clock,
+  Maximize2,
+  Minimize2,
+  ArrowLeft
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
@@ -38,9 +41,26 @@ function cn(...inputs: any[]) {
   return twMerge(clsx(inputs));
 }
 
-// Utility: Image optimization (Resize & JPEG Compress for fast storage)
-async function optimizeImageFile(file: File): Promise<{ dataUrl: string; size: number }> {
-  return new Promise((resolve, reject) => {
+// Format date and time for upload display
+function formatDateTime(isoString?: string): string {
+  if (!isoString) return '일자 미상';
+  try {
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return isoString;
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const hour = String(d.getHours()).padStart(2, '0');
+    const min = String(d.getMinutes()).padStart(2, '0');
+    return `${year}.${month}.${day} ${hour}:${min}`;
+  } catch {
+    return isoString;
+  }
+}
+
+// Utility: Image optimization (Resize & Compress)
+async function optimizeImageFile(file: File): Promise<Blob> {
+  return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = (event) => {
       const img = new Image();
@@ -48,7 +68,7 @@ async function optimizeImageFile(file: File): Promise<{ dataUrl: string; size: n
         const canvas = document.createElement('canvas');
         let width = img.width;
         let height = img.height;
-        const MAX_DIM = 2200;
+        const MAX_DIM = 2000;
 
         if (width > MAX_DIM || height > MAX_DIM) {
           if (width > height) {
@@ -64,37 +84,30 @@ async function optimizeImageFile(file: File): Promise<{ dataUrl: string; size: n
         canvas.height = height;
         const ctx = canvas.getContext('2d');
         if (!ctx) {
-          resolve({ dataUrl: event.target?.result as string, size: file.size });
+          resolve(file);
           return;
         }
 
         ctx.drawImage(img, 0, 0, width, height);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-        const head = 'data:image/jpeg;base64,';
-        const size = Math.round(((dataUrl.length - head.length) * 3) / 4);
-        resolve({ dataUrl, size });
+        canvas.toBlob(
+          (blob) => {
+            resolve(blob || file);
+          },
+          'image/jpeg',
+          0.85
+        );
       };
-      img.onerror = reject;
+      img.onerror = () => resolve(file);
       img.src = event.target?.result as string;
     };
-    reader.onerror = reject;
+    reader.onerror = () => resolve(file);
     reader.readAsDataURL(file);
   });
 }
 
-// Utility: Read generic file as Base64 data URL
-async function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => resolve(e.target?.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
-// Utility: Parse Excel sheets to 2D arrays for PDF-like rendering (Extract all sheets like PO, PACKING)
+// Utility: Parse Excel sheets to 2D arrays (Extract PO, PACKING, etc.)
 async function parseExcelFile(file: File): Promise<{ name: string; data: any[][] }[]> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
@@ -105,23 +118,22 @@ async function parseExcelFile(file: File): Promise<{ name: string; data: any[][]
         workbook.SheetNames.forEach((sheetName) => {
           const worksheet = workbook.Sheets[sheetName];
           const sheetData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' }) as any[][];
-          // Filter out completely empty trailing rows
           const cleanedData = sheetData.filter((row) => row.some((cell) => cell !== '' && cell !== null && cell !== undefined));
           sheets.push({ name: sheetName, data: cleanedData.length > 0 ? cleanedData : sheetData });
         });
 
         resolve(sheets);
       } catch (err) {
-        console.warn('Excel parse fallback error:', err);
+        console.warn('Excel parse notice:', err);
         resolve([]);
       }
     };
-    reader.onerror = reject;
+    reader.onerror = () => resolve([]);
     reader.readAsArrayBuffer(file);
   });
 }
 
-// Calculate D-Day string and badge info
+// Calculate D-Day
 function getDDayInfo(targetDateStr: string | null | undefined): { text: string; isPast: boolean; days: number; rawDays: number } {
   if (!targetDateStr) return { text: 'D-DAY 미설정', isPast: false, days: 99999, rawDays: 99999 };
   const today = new Date();
@@ -144,6 +156,16 @@ function getDDayInfo(targetDateStr: string | null | undefined): { text: string; 
   } else {
     return { text: `D+${Math.abs(diffDays)}`, isPast: true, days: diffDays, rawDays: diffDays };
   }
+}
+
+// Sort files helper: Excel files come first, followed by others
+function sortFilesWithExcelFirst(files: InfoFile[]): InfoFile[] {
+  return [...files].sort((a, b) => {
+    const aIsExcel = a.type === 'excel' ? 0 : 1;
+    const bIsExcel = b.type === 'excel' ? 0 : 1;
+    if (aIsExcel !== bIsExcel) return aIsExcel - bIsExcel;
+    return 0; // maintain relative order
+  });
 }
 
 interface InfoViewProps {
@@ -178,11 +200,9 @@ export const InfoView: React.FC<InfoViewProps> = ({
   
   const [viewerProject, setViewerProject] = useState<InfoProject | null>(null);
   const [activeFileIndex, setActiveFileIndex] = useState<number>(0);
-
-  // Global Document Search inside Viewer Modal
   const [docSearchQuery, setDocSearchQuery] = useState('');
 
-  // Filter & Sort Projects: Default to D-Day Upcoming Order
+  // Filter & Sort Projects
   const filteredProjects = useMemo(() => {
     const list = (infoProjects || []).filter((p) =>
       activeTab === 'completed' ? p.status === 'completed' : p.status !== 'completed'
@@ -198,15 +218,11 @@ export const InfoView: React.FC<InfoViewProps> = ({
       return modelMatch || devMatch || memoMatch || fileMatch;
     });
 
-    // Sorting logic
     return searched.sort((a, b) => {
       if (sortMode === 'dday') {
         const dDayA = getDDayInfo(a.shipmentDate);
         const dDayB = getDDayInfo(b.shipmentDate);
 
-        // Group 1: Upcoming or today (rawDays >= 0) sorted ascending (0, 1, 2...)
-        // Group 2: Past (rawDays < 0) sorted closest past first (-1, -2...)
-        // Group 3: No date (99999)
         const getRank = (info: typeof dDayA) => {
           if (info.rawDays === 99999) return 3;
           if (info.rawDays >= 0) return 1;
@@ -217,16 +233,14 @@ export const InfoView: React.FC<InfoViewProps> = ({
         const rankB = getRank(dDayB);
 
         if (rankA !== rankB) return rankA - rankB;
-
-        if (rankA === 1) return dDayA.rawDays - dDayB.rawDays; // Upcoming closest first
-        if (rankA === 2) return dDayB.rawDays - dDayA.rawDays; // Recent past first
+        if (rankA === 1) return dDayA.rawDays - dDayB.rawDays;
+        if (rankA === 2) return dDayB.rawDays - dDayA.rawDays;
         return (a.sortOrder || 0) - (b.sortOrder || 0);
       } else if (sortMode === 'created') {
         return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
       } else if (sortMode === 'model') {
         return (a.model || '').localeCompare(b.model || '');
       } else {
-        // Custom order
         return (a.sortOrder || 0) - (b.sortOrder || 0);
       }
     });
@@ -243,7 +257,6 @@ export const InfoView: React.FC<InfoViewProps> = ({
     const currentProj = filteredProjects[currentIndex];
     const targetProj = filteredProjects[targetIndex];
 
-    // Re-index all projects with new custom sortOrder
     const newOrderList = [...filteredProjects];
     newOrderList[currentIndex] = targetProj;
     newOrderList[targetIndex] = currentProj;
@@ -258,6 +271,26 @@ export const InfoView: React.FC<InfoViewProps> = ({
 
     setSortMode('custom');
     await onSaveProjects(updated);
+  };
+
+  // Reorder Files inside Viewer Project (Move Left / Move Right)
+  const handleMoveFile = async (fromIdx: number, direction: 'left' | 'right') => {
+    if (!viewerProject || !viewerProject.files) return;
+    const toIdx = direction === 'left' ? fromIdx - 1 : fromIdx + 1;
+    if (toIdx < 0 || toIdx >= viewerProject.files.length) return;
+
+    const newFiles = [...viewerProject.files];
+    const temp = newFiles[fromIdx];
+    newFiles[fromIdx] = newFiles[toIdx];
+    newFiles[toIdx] = temp;
+
+    const updatedProjects = infoProjects.map((p) =>
+      p.id === viewerProject.id ? { ...p, files: newFiles } : p
+    );
+
+    await onSaveProjects(updatedProjects);
+    setViewerProject({ ...viewerProject, files: newFiles });
+    setActiveFileIndex(toIdx);
   };
 
   // Project Add / Edit submit
@@ -331,7 +364,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
     });
   };
 
-  // Complete / Undo Complete project
+  // Toggle Complete project
   const handleToggleCompleteProject = (project: InfoProject, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     if (!isAdmin) {
@@ -361,7 +394,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
     });
   };
 
-  // Upload files handler (PDF, Excel, Images with Fail-Safe Multi-layer storage & auto-fallback)
+  // Upload files handler with server filesystem storage (Ultra lightweight Redis payload)
   const handleUploadFiles = async (targetProjectId: string, files: File[]) => {
     const targetProj = infoProjects.find((p) => p.id === targetProjectId);
     if (!targetProj) {
@@ -370,73 +403,49 @@ export const InfoView: React.FC<InfoViewProps> = ({
     }
 
     try {
-      const existingFiles = [...(targetProj.files || [])];
+      let existingFiles = [...(targetProj.files || [])];
 
       for (const file of files) {
         const ext = file.name.split('.').pop()?.toLowerCase() || '';
         let fileType: 'pdf' | 'excel' | 'image' | 'other' = 'other';
         let fileSize = file.size;
         let parsedSheets: { name: string; data: any[][] }[] | undefined = undefined;
-        let rawDataUrl = '';
+        let fileBlob: Blob = file;
 
         if (ext === 'pdf') {
           fileType = 'pdf';
-          try {
-            rawDataUrl = await readFileAsDataUrl(file);
-          } catch {
-            rawDataUrl = '';
-          }
         } else if (['xlsx', 'xls', 'csv'].includes(ext)) {
           fileType = 'excel';
-          try {
-            rawDataUrl = await readFileAsDataUrl(file);
-            parsedSheets = await parseExcelFile(file);
-          } catch (e) {
-            console.warn('Excel parse notice:', e);
-          }
+          parsedSheets = await parseExcelFile(file);
         } else if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'].includes(ext)) {
           fileType = 'image';
-          try {
-            const optimized = await optimizeImageFile(file);
-            rawDataUrl = optimized.dataUrl;
-            fileSize = optimized.size;
-          } catch {
-            rawDataUrl = await readFileAsDataUrl(file);
-          }
-        } else {
-          rawDataUrl = await readFileAsDataUrl(file);
+          fileBlob = await optimizeImageFile(file);
         }
 
-        // Multi-Layer Upload: Try server streaming endpoint first
-        let savedUrl = rawDataUrl;
-        try {
-          const formData = new FormData();
-          formData.append('file', file, file.name);
+        // Upload streaming binary to server filesystem
+        const formData = new FormData();
+        formData.append('file', fileBlob, file.name);
 
-          const uploadRes = await fetch('/api/upload-file', {
-            method: 'POST',
-            body: formData
-          });
+        const uploadRes = await fetch('/api/upload-file', {
+          method: 'POST',
+          body: formData
+        });
 
-          if (uploadRes.ok) {
-            const uploadJson = await uploadRes.json();
-            if (uploadJson.url) {
-              savedUrl = uploadJson.url;
-              fileSize = uploadJson.size || fileSize;
-            }
-          } else {
-            console.warn('Server upload non-200, fallback to dataUrl storage');
-          }
-        } catch (uploadErr) {
-          console.warn('Server streaming upload failed, seamless dataUrl fallback:', uploadErr);
+        if (!uploadRes.ok) {
+          const errData = await uploadRes.json().catch(() => ({}));
+          throw new Error(errData.error || `서버 업로드 오류 (${uploadRes.status})`);
         }
+
+        const uploadJson = await uploadRes.json();
+        const savedUrl = uploadJson.url || `/uploads/${encodeURIComponent(uploadJson.filename || file.name)}`;
+        fileSize = uploadJson.size || fileSize;
 
         const newFileObj: InfoFile = {
           id: Date.now().toString() + '_' + Math.random().toString(36).substr(2, 4),
           name: file.name,
           type: fileType,
           size: fileSize,
-          dataUrl: savedUrl || rawDataUrl,
+          dataUrl: savedUrl, // Only lightweight URL string (/uploads/...) stored in Redis!
           uploadedAt: new Date().toISOString(),
           parsedSheets
         };
@@ -450,6 +459,9 @@ export const InfoView: React.FC<InfoViewProps> = ({
         }
       }
 
+      // Automatically place Excel files first
+      existingFiles = sortFilesWithExcelFirst(existingFiles);
+
       const updated = infoProjects.map((p) => (p.id === targetProjectId ? { ...p, files: existingFiles } : p));
       await onSaveProjects(updated);
       setIsUploadModalOpen(false);
@@ -459,7 +471,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
         if (updatedTarget) setViewerProject(updatedTarget);
       }
 
-      showAlert('업로드 완료', `${files.length}개 파일이 성공적으로 등록되었습니다.`, 'success');
+      showAlert('업로드 완료', `${files.length}개 파일이 성공적으로 등록되었습니다. (엑셀 우선 정렬 및 덮어쓰기 적용)`, 'success');
     } catch (err: any) {
       console.error('File upload error:', err);
       showAlert('업로드 오류', err.message || '파일 처리 중 오류가 발생했습니다.', 'error');
@@ -496,14 +508,13 @@ export const InfoView: React.FC<InfoViewProps> = ({
     });
   };
 
-  // Document Navigator Search Results (Across all files in viewerProject)
+  // Document Navigator Search Results
   const docSearchResults = useMemo(() => {
     if (!viewerProject || !docSearchQuery.trim()) return [];
     const query = docSearchQuery.toLowerCase().trim();
     const results: { fileIndex: number; fileName: string; type: string; sheetName?: string; snippet: string }[] = [];
 
     (viewerProject.files || []).forEach((file, fIdx) => {
-      // Check file name match
       if (file.name.toLowerCase().includes(query)) {
         results.push({
           fileIndex: fIdx,
@@ -513,7 +524,6 @@ export const InfoView: React.FC<InfoViewProps> = ({
         });
       }
 
-      // Check excel sheets & cell content match
       if (file.type === 'excel' && file.parsedSheets) {
         file.parsedSheets.forEach((sheet) => {
           if (sheet.name.toLowerCase().includes(query)) {
@@ -525,7 +535,6 @@ export const InfoView: React.FC<InfoViewProps> = ({
               snippet: `시트명 일치: [${sheet.name}]`
             });
           }
-          // Search cells
           for (let r = 0; r < sheet.data.length; r++) {
             const row = sheet.data[r];
             const rowStr = row.map((c) => String(c || '')).join(' ');
@@ -537,7 +546,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
                 sheetName: sheet.name,
                 snippet: `[${sheet.name}] ${r + 1}행: ${rowStr.substring(0, 50)}...`
               });
-              break; // One match per sheet is enough for jumping
+              break;
             }
           }
         });
@@ -694,7 +703,6 @@ export const InfoView: React.FC<InfoViewProps> = ({
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                   {/* Left: Reorder Controls (Up/Down) & Model, Device Type */}
                   <div className="flex items-start gap-3 flex-1 min-w-0">
-                    {/* Manual Order Controls (Up / Down) */}
                     <div className="flex flex-col items-center justify-center bg-black/20 rounded-lg p-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
                       <button
                         onClick={(e) => handleMoveProject(project.id, 'up', e)}
@@ -808,13 +816,13 @@ export const InfoView: React.FC<InfoViewProps> = ({
                       <FileText size={13} />
                       문서 {fileCount}개
                     </span>
+                    {excelCount > 0 && <span className="bg-emerald-800/90 text-white px-2 py-0.5 rounded text-[11px] font-black">엑셀 {excelCount} (최우선)</span>}
                     {pdfCount > 0 && <span className="bg-rose-500/80 text-white px-1.5 py-0.5 rounded text-[11px] font-bold">PDF {pdfCount}</span>}
-                    {excelCount > 0 && <span className="bg-emerald-800/80 text-white px-1.5 py-0.5 rounded text-[11px] font-bold">엑셀 {excelCount}</span>}
                     {imageCount > 0 && <span className="bg-amber-600/80 text-white px-1.5 py-0.5 rounded text-[11px] font-bold">사진 {imageCount}</span>}
                   </div>
 
                   <div className="flex items-center gap-1 font-bold text-white group-hover:translate-x-0.5 transition-transform">
-                    <span>터치하여 도면/문서 열람</span>
+                    <span>터치하여 도면/문서 전체화면 열람</span>
                     <ChevronRight size={15} />
                   </div>
                 </div>
@@ -825,33 +833,32 @@ export const InfoView: React.FC<InfoViewProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* 1. File Viewer & Document Preview Modal (Edge-to-Edge & Full Navigation) */}
+      {/* 1. Fullscreen Document & Excel Viewer Modal                               */}
       {/* ========================================================================= */}
       <AnimatePresence>
         {viewerProject && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-0 md:p-1.5 bg-slate-950/90 backdrop-blur-sm overflow-hidden">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-0 bg-slate-950/95 overflow-hidden">
             <motion.div
-              initial={{ opacity: 0, scale: 0.98 }}
+              initial={{ opacity: 0, scale: 0.99 }}
               animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.98 }}
-              className="bg-slate-900 w-full h-full rounded-none md:rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-slate-800"
+              exit={{ opacity: 0, scale: 0.99 }}
+              className="bg-slate-900 w-full h-full flex flex-col overflow-hidden"
             >
-              {/* Modal Header */}
-              <div className="px-3 md:px-5 py-2.5 bg-slate-900 text-white flex items-center justify-between shrink-0 border-b border-slate-800">
+              {/* Modal Top Bar */}
+              <div className="px-3 md:px-5 py-2 bg-slate-900 text-white flex items-center justify-between shrink-0 border-b border-slate-800">
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-8 h-8 bg-emerald-500 rounded-lg flex items-center justify-center font-black text-xs shrink-0 shadow-sm">
-                    Info
+                  <div className="w-8 h-8 bg-emerald-600 rounded-lg flex items-center justify-center font-black text-xs shrink-0 shadow-sm">
+                    AJ
                   </div>
                   <div className="truncate">
                     <h3 className="font-black text-sm md:text-base truncate flex items-center gap-2">
                       <span>{viewerProject.model}</span>
                       <span className="text-emerald-400 text-xs md:text-sm font-normal">({viewerProject.deviceType})</span>
                     </h3>
-                    <p className="text-[11px] text-slate-400">
-                      선적: {viewerProject.shipmentDate || '미정'} | 수량:{' '}
-                      {typeof viewerProject.quantity === 'number'
-                        ? viewerProject.quantity.toLocaleString()
-                        : viewerProject.quantity}
+                    <p className="text-[11px] text-slate-400 flex items-center gap-2">
+                      <span>선적: {viewerProject.shipmentDate || '미정'}</span>
+                      <span>•</span>
+                      <span>수량: {typeof viewerProject.quantity === 'number' ? viewerProject.quantity.toLocaleString() : viewerProject.quantity}</span>
                     </p>
                   </div>
                 </div>
@@ -862,7 +869,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
                     <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
                     <input
                       type="text"
-                      placeholder="문서/시트/단어 탐색..."
+                      placeholder="도면/엑셀/시트 단어 검색..."
                       value={docSearchQuery}
                       onChange={(e) => setDocSearchQuery(e.target.value)}
                       className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-8 pr-7 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-400"
@@ -875,21 +882,22 @@ export const InfoView: React.FC<InfoViewProps> = ({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-2">
                   <button
                     onClick={() => setViewerProject(null)}
-                    className="p-2 hover:bg-slate-800 text-slate-300 hover:text-white rounded-full transition-colors cursor-pointer"
+                    className="flex items-center gap-1.5 bg-slate-800 hover:bg-rose-600 px-3 py-1.5 rounded-xl text-white text-xs font-bold transition-colors cursor-pointer"
                     title="닫기"
                   >
-                    <X size={22} />
+                    <X size={16} />
+                    <span>닫기</span>
                   </button>
                 </div>
               </div>
 
-              {/* Search Results Dropdown / Bar when Searching */}
+              {/* Search Results Dropdown Bar */}
               {docSearchQuery && (
                 <div className="bg-slate-950 border-b border-emerald-500/40 px-3 py-2 text-xs flex items-center gap-2 overflow-x-auto no-scrollbar shrink-0">
-                  <span className="text-emerald-400 font-bold shrink-0">탐색 결과 ({docSearchResults.length}):</span>
+                  <span className="text-emerald-400 font-bold shrink-0">검색 결과 ({docSearchResults.length}):</span>
                   {docSearchResults.length === 0 ? (
                     <span className="text-slate-500">일치하는 문서나 내용이 없습니다.</span>
                   ) : (
@@ -910,30 +918,59 @@ export const InfoView: React.FC<InfoViewProps> = ({
                 </div>
               )}
 
-              {/* File Selection Tabs Header */}
-              <div className="bg-slate-950 border-b border-slate-800 px-2 md:px-4 py-1.5 flex items-center gap-1.5 overflow-x-auto shrink-0 no-scrollbar">
+              {/* File Selection Tabs Header (With Order Movement Controls ◀ ▶) */}
+              <div className="bg-slate-950 border-b border-slate-800 px-2 md:px-4 py-1.5 flex items-center gap-2 overflow-x-auto shrink-0 no-scrollbar">
+                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider shrink-0 mr-1">
+                  첨부문서:
+                </span>
                 {(viewerProject.files || []).length === 0 ? (
-                  <span className="text-xs text-slate-500 font-medium py-1">등록된 첨부 문서/사진이 없습니다.</span>
+                  <span className="text-xs text-slate-500 font-medium py-1">등록된 문서가 없습니다.</span>
                 ) : (
                   viewerProject.files.map((file, idx) => {
                     const isActive = idx === activeFileIndex;
                     return (
-                      <button
+                      <div
                         key={file.id}
-                        onClick={() => setActiveFileIndex(idx)}
                         className={cn(
-                          'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shrink-0 max-w-[220px] cursor-pointer',
+                          'flex items-center gap-1 pl-2.5 pr-1.5 py-1 rounded-xl text-xs font-bold transition-all shrink-0 border',
                           isActive
-                            ? 'bg-slate-800 text-white shadow-sm border border-slate-700 ring-1 ring-emerald-500/50'
-                            : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200'
+                            ? 'bg-slate-800 text-white border-slate-600 ring-1 ring-emerald-500 shadow-md'
+                            : 'bg-slate-900/70 text-slate-400 border-slate-800 hover:bg-slate-800 hover:text-slate-200'
                         )}
                       >
-                        {file.type === 'pdf' && <FileText size={13} className="text-rose-400 shrink-0" />}
-                        {file.type === 'excel' && <FileSpreadsheet size={13} className="text-emerald-400 shrink-0" />}
-                        {file.type === 'image' && <ImageIcon size={13} className="text-amber-400 shrink-0" />}
-                        {file.type === 'other' && <FileCheck size={13} className="text-blue-400 shrink-0" />}
-                        <span className="truncate">{file.name}</span>
-                      </button>
+                        <button
+                          onClick={() => setActiveFileIndex(idx)}
+                          className="flex items-center gap-1.5 max-w-[160px] md:max-w-[220px] truncate cursor-pointer text-left"
+                        >
+                          {file.type === 'excel' && <FileSpreadsheet size={14} className="text-emerald-400 shrink-0" />}
+                          {file.type === 'pdf' && <FileText size={14} className="text-rose-400 shrink-0" />}
+                          {file.type === 'image' && <ImageIcon size={14} className="text-amber-400 shrink-0" />}
+                          {file.type === 'other' && <FileCheck size={14} className="text-blue-400 shrink-0" />}
+                          <span className="truncate">{file.name}</span>
+                        </button>
+
+                        {/* File Position Order Adjusters (Left / Right) */}
+                        {isAdmin && viewerProject.files.length > 1 && (
+                          <div className="flex items-center ml-1 border-l border-slate-700/60 pl-1">
+                            <button
+                              onClick={() => handleMoveFile(idx, 'left')}
+                              disabled={idx === 0}
+                              className="p-0.5 hover:bg-slate-700 disabled:opacity-20 text-slate-400 hover:text-white rounded cursor-pointer"
+                              title="문서 순서 앞으로 이동"
+                            >
+                              <ChevronLeft size={13} />
+                            </button>
+                            <button
+                              onClick={() => handleMoveFile(idx, 'right')}
+                              disabled={idx === viewerProject.files.length - 1}
+                              className="p-0.5 hover:bg-slate-700 disabled:opacity-20 text-slate-400 hover:text-white rounded cursor-pointer"
+                              title="문서 순서 뒤로 이동"
+                            >
+                              <ChevronRight size={13} />
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     );
                   })
                 )}
@@ -948,7 +985,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
                     </div>
                     <h4 className="text-base font-bold text-slate-200 mb-1">업로드된 파일이 없습니다</h4>
                     <p className="text-xs text-slate-400 max-w-xs">
-                      상단의 [업로드] 버튼을 통해 작업지시서(PDF), 부품표(Excel), 사진을 등록할 수 있습니다.
+                      상단의 [업로드] 버튼을 통해 엑셀(PO, PACKING), 작업지시서(PDF), 사진을 등록할 수 있습니다.
                     </p>
                   </div>
                 ) : (
@@ -958,13 +995,18 @@ export const InfoView: React.FC<InfoViewProps> = ({
 
                     return (
                       <div className="flex-1 flex flex-col overflow-hidden">
-                        {/* File Action Sub-bar */}
+                        {/* File Action Sub-bar with Upload Timestamp */}
                         <div className="px-3 py-1.5 bg-slate-900 border-b border-slate-800 flex items-center justify-between text-xs shrink-0">
-                          <div className="flex items-center gap-2 truncate">
+                          <div className="flex items-center gap-3 truncate">
                             <span className="font-bold text-slate-200 truncate">{currentFile.name}</span>
                             <span className="text-slate-500 text-[11px]">
                               ({(currentFile.size / 1024).toFixed(1)} KB)
                             </span>
+                            {/* Upload Timestamp Badge */}
+                            <div className="flex items-center gap-1 text-[11px] bg-slate-800 text-emerald-400 px-2 py-0.5 rounded-md border border-slate-700">
+                              <Clock size={12} />
+                              <span>업로드: {formatDateTime(currentFile.uploadedAt)}</span>
+                            </div>
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0">
                             <a
@@ -973,7 +1015,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
                               className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs transition-all cursor-pointer"
                             >
                               <Download size={13} />
-                              <span>다운로드</span>
+                              <span className="hidden sm:inline">다운로드</span>
                             </a>
                             {isAdmin && (
                               <button
@@ -989,7 +1031,12 @@ export const InfoView: React.FC<InfoViewProps> = ({
 
                         {/* Rendering by Type */}
                         <div className="flex-1 overflow-hidden flex flex-col">
-                          {/* 1. PDF File Viewer */}
+                          {/* 1. Excel File Viewer (Full Screen Width, All Sheets PO/PACKING, Print-Look) */}
+                          {currentFile.type === 'excel' && (
+                            <ExcelPdfLikeViewer file={currentFile} />
+                          )}
+
+                          {/* 2. PDF File Viewer (Zero Left-Cut, Smooth Pan & Search) */}
                           {currentFile.type === 'pdf' && (
                             <UniversalPdfViewer
                               url={currentFile.dataUrl}
@@ -998,12 +1045,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
                             />
                           )}
 
-                          {/* 2. Excel File Viewer (All Sheets PO, PACKING Tabbed Conversion) */}
-                          {currentFile.type === 'excel' && (
-                            <ExcelPdfLikeViewer file={currentFile} />
-                          )}
-
-                          {/* 3. Image Viewer (Full Pan & Drag with zero left-cut) */}
+                          {/* 3. Image Viewer (Zero Left-Cut Pan & Zoom) */}
                           {currentFile.type === 'image' && (
                             <ImageViewer file={currentFile} />
                           )}
@@ -1052,7 +1094,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
       </AnimatePresence>
 
       {/* ========================================================================= */}
-      {/* 3. Upload Modal (PDF, Excel, Photo with auto-compression)                 */}
+      {/* 3. Upload Modal                                                           */}
       {/* ========================================================================= */}
       <AnimatePresence>
         {isUploadModalOpen && (
@@ -1069,11 +1111,12 @@ export const InfoView: React.FC<InfoViewProps> = ({
 };
 
 // ============================================================================
-// Sub-Component: Excel Sheets Viewer (PO, PACKING, etc. All Sheets Tabbed)
+// Sub-Component: Fullscreen Excel Document Viewer (PO, PACKING, etc. All Sheets)
 // ============================================================================
 const ExcelPdfLikeViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
   const [selectedSheetIdx, setSelectedSheetIdx] = useState<number>(0);
   const [sheetSearch, setSheetSearch] = useState<string>('');
+  const [zoomLevel, setZoomLevel] = useState<number>(100); // 70%, 85%, 100%, 115%, 130%
   const sheets = file.parsedSheets || [];
 
   if (sheets.length === 0) {
@@ -1108,9 +1151,9 @@ const ExcelPdfLikeViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
   }, [allRows, sheetSearch]);
 
   return (
-    <div className="w-full h-full flex flex-col bg-slate-900 overflow-hidden">
-      {/* Top Sheet Tabs & Search Bar */}
-      <div className="bg-slate-950 border-b border-slate-800 px-3 py-2 flex flex-wrap items-center justify-between gap-2 shrink-0">
+    <div className="w-full h-full flex flex-col bg-slate-950 overflow-hidden">
+      {/* Top Sheet Tabs & Controls Bar */}
+      <div className="bg-slate-900 border-b border-slate-800 px-3 py-2 flex flex-wrap items-center justify-between gap-2 shrink-0 shadow-md">
         {/* Sheet Tabs: PO, PACKING, etc. */}
         <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
           {sheets.map((sheet, idx) => {
@@ -1123,15 +1166,15 @@ const ExcelPdfLikeViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
                   setSheetSearch('');
                 }}
                 className={cn(
-                  'px-3 py-1.5 rounded-lg text-xs font-black transition-all shrink-0 cursor-pointer flex items-center gap-1.5',
+                  'px-3.5 py-1.5 rounded-lg text-xs font-black transition-all shrink-0 cursor-pointer flex items-center gap-1.5',
                   isCurrent
-                    ? 'bg-emerald-600 text-white shadow-sm ring-1 ring-emerald-400'
+                    ? 'bg-emerald-600 text-white shadow-md ring-1 ring-emerald-400'
                     : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white'
                 )}
               >
-                <FileSpreadsheet size={13} className={isCurrent ? 'text-white' : 'text-emerald-400'} />
+                <FileSpreadsheet size={14} className={isCurrent ? 'text-white' : 'text-emerald-400'} />
                 <span>{sheet.name}</span>
-                <span className={cn('text-[10px] px-1.5 py-0.2 rounded font-mono', isCurrent ? 'bg-black/20' : 'bg-slate-900')}>
+                <span className={cn('text-[10px] px-1.5 py-0.2 rounded font-mono', isCurrent ? 'bg-black/25 text-white' : 'bg-slate-900 text-slate-400')}>
                   {sheet.data.length}행
                 </span>
               </button>
@@ -1139,48 +1182,70 @@ const ExcelPdfLikeViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
           })}
         </div>
 
-        {/* Sheet Search */}
-        <div className="relative min-w-[160px] max-w-xs">
-          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            placeholder={`${currentSheet.name} 내 단어/부품 검색...`}
-            value={sheetSearch}
-            onChange={(e) => setSheetSearch(e.target.value)}
-            className="w-full pl-8 pr-6 py-1 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-400"
-          />
-          {sheetSearch && (
-            <button onClick={() => setSheetSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white">
-              <X size={12} />
+        {/* Zoom & Search Controls */}
+        <div className="flex items-center gap-2">
+          {/* Zoom In/Out for comfortable viewing */}
+          <div className="flex items-center bg-slate-950 border border-slate-700 rounded-lg p-0.5 text-xs text-slate-300">
+            <button
+              onClick={() => setZoomLevel((z) => Math.max(60, z - 10))}
+              className="p-1 hover:bg-slate-800 rounded cursor-pointer"
+              title="글자 축소"
+            >
+              <ZoomOut size={13} />
             </button>
-          )}
+            <span className="px-1.5 font-mono font-bold text-[11px]">{zoomLevel}%</span>
+            <button
+              onClick={() => setZoomLevel((z) => Math.min(160, z + 10))}
+              className="p-1 hover:bg-slate-800 rounded cursor-pointer"
+              title="글자 확대"
+            >
+              <ZoomIn size={13} />
+            </button>
+          </div>
+
+          {/* Sheet Search */}
+          <div className="relative min-w-[150px] max-w-xs">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              placeholder={`${currentSheet.name} 내 단어 검색...`}
+              value={sheetSearch}
+              onChange={(e) => setSheetSearch(e.target.value)}
+              className="w-full pl-8 pr-6 py-1 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-400"
+            />
+            {sheetSearch && (
+              <button onClick={() => setSheetSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white">
+                <X size={12} />
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* PDF Document Print-Look Sheet Table */}
-      <div className="flex-1 overflow-auto p-2 sm:p-4 bg-slate-950 flex flex-col">
-        <div className="m-auto bg-white shadow-2xl border border-slate-300 rounded-sm p-4 md:p-6 min-w-full sm:min-w-[850px] max-w-6xl">
-          {/* Header Banner */}
-          <div className="border-b-2 border-slate-900 pb-2.5 mb-3 flex items-center justify-between">
-            <div>
-              <h4 className="text-base md:text-lg font-black text-slate-900 tracking-tight uppercase flex items-center gap-2">
-                <span>{currentSheet.name}</span>
-                <span className="text-xs bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-bold font-mono">
-                  EXCEL SHEET
-                </span>
-              </h4>
-              <p className="text-[11px] text-slate-400 font-mono">DOCUMENT VIEWER (PO / PACKING / DRAWING DATA)</p>
-            </div>
-            <div className="text-right">
-              <span className="text-xs bg-slate-100 text-slate-700 px-2.5 py-1 rounded border border-slate-200 font-bold font-mono">
-                {filteredRows.length} / {allRows.length} 행
+      {/* Fullscreen Table Viewport (No cramped cards, edge-to-edge scrollable view) */}
+      <div className="flex-1 overflow-auto bg-slate-900 p-0 md:p-3">
+        <div className="bg-white shadow-xl min-w-full md:rounded-xl border border-slate-300 overflow-hidden flex flex-col">
+          {/* Header Strip */}
+          <div className="bg-slate-800 text-white px-4 py-2.5 flex items-center justify-between border-b border-slate-700">
+            <div className="flex items-center gap-2">
+              <span className="bg-emerald-600 text-white text-xs font-black px-2 py-0.5 rounded font-mono">
+                {currentSheet.name}
               </span>
+              <span className="text-xs text-slate-300 font-mono hidden sm:inline">
+                EXCEL DOCUMENT VIEWER
+              </span>
+            </div>
+            <div className="text-xs text-slate-300 font-mono">
+              총 {allRows.length}행 중 {filteredRows.length}행 표시
             </div>
           </div>
 
-          {/* Table Body */}
-          <div className="overflow-x-auto border border-slate-300 rounded-sm">
-            <table className="w-full border-collapse text-xs md:text-sm font-sans">
+          {/* Table */}
+          <div className="overflow-auto max-h-[calc(100vh-140px)]">
+            <table
+              className="w-full border-collapse font-sans text-slate-900"
+              style={{ fontSize: `${(zoomLevel / 100) * 13}px` }}
+            >
               <tbody>
                 {filteredRows.map((row, rIdx) => {
                   const isHeader = rIdx === 0;
@@ -1189,28 +1254,46 @@ const ExcelPdfLikeViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
                       key={rIdx}
                       className={cn(
                         'transition-colors',
-                        isHeader ? 'bg-slate-900 text-white font-black sticky top-0 z-10' : rIdx % 2 === 1 ? 'bg-slate-50/80' : 'bg-white',
-                        'border-b border-slate-200 hover:bg-emerald-50/60'
+                        isHeader
+                          ? 'bg-slate-900 text-white font-black sticky top-0 z-10 shadow-sm'
+                          : rIdx % 2 === 1
+                          ? 'bg-slate-50'
+                          : 'bg-white',
+                        'border-b border-slate-200 hover:bg-emerald-50/70'
                       )}
                     >
-                      <td className={cn(
-                        'p-2 border-r border-slate-200 text-center font-mono text-[11px] select-none shrink-0 w-10',
-                        isHeader ? 'bg-slate-950 text-slate-400 border-slate-700' : 'text-slate-400 bg-slate-100/60'
-                      )}>
+                      {/* Row Index Column */}
+                      <td
+                        className={cn(
+                          'p-2 border-r border-slate-300 text-center font-mono text-[11px] select-none shrink-0 sticky left-0 z-5',
+                          isHeader
+                            ? 'bg-slate-950 text-slate-400 border-slate-700'
+                            : 'text-slate-400 bg-slate-100'
+                        )}
+                        style={{ minWidth: '40px' }}
+                      >
                         {isHeader ? '#' : rIdx}
                       </td>
-                      {row.map((cell: any, cIdx: number) => (
-                        <td
-                          key={cIdx}
-                          className={cn(
-                            'p-2 md:p-2.5 border-r border-slate-200 last:border-r-0 break-words whitespace-nowrap md:whitespace-normal',
-                            isHeader && 'text-center border-slate-700 font-black',
-                            typeof cell === 'number' ? 'text-right font-mono font-medium' : 'text-left'
-                          )}
-                        >
-                          {cell !== null && cell !== undefined ? String(cell) : ''}
-                        </td>
-                      ))}
+
+                      {/* Cell Data */}
+                      {row.map((cell: any, cIdx: number) => {
+                        const cellStr = cell !== null && cell !== undefined ? String(cell) : '';
+                        const isNum = typeof cell === 'number' || (!isNaN(Number(cellStr)) && cellStr.trim() !== '');
+
+                        return (
+                          <td
+                            key={cIdx}
+                            className={cn(
+                              'p-2.5 border-r border-slate-200 last:border-r-0 whitespace-nowrap break-words',
+                              isHeader && 'text-center border-slate-700 font-black',
+                              !isHeader && isNum && 'text-right font-mono',
+                              !isHeader && !isNum && 'text-left'
+                            )}
+                          >
+                            {cellStr}
+                          </td>
+                        );
+                      })}
                     </tr>
                   );
                 })}
@@ -1224,7 +1307,7 @@ const ExcelPdfLikeViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
 };
 
 // ============================================================================
-// Sub-Component: High Definition Image Viewer with Zero Left-Cut Pan & Drag
+// Sub-Component: High Definition Image Viewer (Zero Left-Cut Pan & Zoom)
 // ============================================================================
 const ImageViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
   const [scale, setScale] = useState<number>(1);
@@ -1306,13 +1389,7 @@ const ImageViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
         </button>
       </div>
 
-      {/* Drag Pan Guide */}
-      <div className="absolute bottom-3 left-3 z-10 hidden md:flex items-center gap-1.5 text-xs text-slate-400 bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-lg border border-slate-800 pointer-events-none">
-        <Move size={13} className="text-emerald-400 animate-pulse" />
-        <span>마우스 좌클릭 드래그로 사방 이동 (확대 시 짤림 없음)</span>
-      </div>
-
-      {/* Image Container with `m-auto min-w-fit` so zoom-in never cuts off left content */}
+      {/* Image Container with `m-auto min-w-fit` */}
       <div
         ref={containerRef}
         onMouseDown={handleMouseDown}
@@ -1554,7 +1631,7 @@ const UploadModal: React.FC<{
 
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1">
-              파일 선택 (PDF 작업지시서, 엑셀 부품표/PO/PACKING, 사진)
+              파일 선택 (엑셀 PO/PACKING, PDF 도면/지시서, 사진)
             </label>
             <div
               onDragOver={(e) => e.preventDefault()}
@@ -1575,7 +1652,7 @@ const UploadModal: React.FC<{
                 파일을 드래그하여 놓거나 클릭하여 선택
               </p>
               <p className="text-xs text-slate-400">
-                PDF 도면(연속 스크롤/검색 지원), Excel(모든 시트 탭 분리 지원), 사진(고화질 압축)
+                엑셀(PO, PACKING 전 시트 분리 & 1순위 정렬), PDF 도면(연속 스크롤/검색), 사진
               </p>
             </div>
           </div>
