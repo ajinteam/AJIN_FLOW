@@ -13,6 +13,26 @@ const __dirname = path.dirname(__filename);
 const REDIS_FLOW_KEY = "ajin_flow26_Backup";
 const REDIS_INFO_KEY = "ajin_info26";
 
+// Safe Unicode-aware filename cleaner
+function safeCleanFilename(rawName: string): string {
+  if (!rawName) return 'file';
+  let name = rawName;
+  // If latin-1 mojibake was sent by older client, decode only if safe
+  try {
+    if (/^[\x00-\xFF]+$/.test(name) && /[\x80-\xFF]/.test(name)) {
+      const candidate = Buffer.from(name, 'latin1').toString('utf8');
+      if (!candidate.includes('\uFFFD') && candidate.length > 0) {
+        name = candidate;
+      }
+    }
+  } catch {}
+
+  // Strip only truly illegal OS path characters (\ / : * ? " < > | and control characters)
+  // Keep Korean, Japanese, Chinese (Kanji/Hanja like 系, 形), commas, brackets, spaces, etc.
+  const cleaned = name.replace(/[\\/:*?"<>|\r\n\t]/g, '_').trim();
+  return cleaned || 'file';
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -28,7 +48,7 @@ async function startServer() {
     next();
   });
 
-  // Increase payload limit for JSON APIs
+  // Body parser limits for JSON and form requests
   app.use(express.json({ limit: '100mb' }));
   app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
@@ -44,24 +64,18 @@ async function startServer() {
       cb(null, uploadsDir);
     },
     filename: (req, file, cb) => {
-      let originalName = file.originalname;
-      try {
-        originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
-      } catch {
-        originalName = file.originalname;
-      }
+      const cleanName = safeCleanFilename(file.originalname);
       const timestamp = Date.now();
-      const sanitizedName = originalName.replace(/[^a-zA-Z0-9._가-힣-]/g, '_');
-      cb(null, `${timestamp}_${sanitizedName}`);
+      cb(null, `${timestamp}_${cleanName}`);
     }
   });
 
   const upload = multer({
     storage,
-    limits: { fileSize: 100 * 1024 * 1024 } // 100MB limit
+    limits: { fileSize: 100 * 1024 * 1024 } // 100MB per file limit
   });
 
-  // Serve uploaded files explicitly with exact UTF-8 and raw filename resolution (Avoid 404 HTML fallback)
+  // Serve uploaded files explicitly with Unicode and UTF-8 header support
   app.get('/uploads/:filename', (req, res) => {
     try {
       const rawParam = req.params.filename;
@@ -70,10 +84,19 @@ async function startServer() {
         decodedFilename = decodeURIComponent(rawParam);
       } catch {}
 
-      // Check decoded filename first, then rawParam
+      // Try decoded filename first, then rawParam
       let targetPath = path.join(uploadsDir, decodedFilename);
       if (!fs.existsSync(targetPath)) {
         targetPath = path.join(uploadsDir, rawParam);
+      }
+
+      // If not exact match, search folder for timestamp-matched or sanitized file
+      if (!fs.existsSync(targetPath)) {
+        const files = fs.readdirSync(uploadsDir);
+        const match = files.find(f => f === decodedFilename || f === rawParam || encodeURIComponent(f) === rawParam);
+        if (match) {
+          targetPath = path.join(uploadsDir, match);
+        }
       }
 
       if (fs.existsSync(targetPath) && fs.statSync(targetPath).isFile()) {
@@ -89,10 +112,11 @@ async function startServer() {
         } else if (ext === '.png') {
           res.setHeader('Content-Type', 'image/png');
         }
+        res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(path.basename(targetPath))}`);
         return res.sendFile(targetPath);
       }
 
-      // If not found in uploads folder, return JSON 404 instead of HTML SPA
+      // If not found in uploads folder, return JSON 404 instead of HTML SPA fallback
       return res.status(404).json({ error: 'File not found on server storage' });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || 'File download error' });
@@ -106,7 +130,7 @@ async function startServer() {
     res.json({ status: "ok", env: process.env.NODE_ENV });
   });
 
-  // Robust File Upload Endpoint (FormData and Base64 support, No 405 error)
+  // Direct Binary File Upload Endpoint
   app.all("/api/upload-file", upload.single('file'), async (req, res) => {
     if (req.method === "OPTIONS") {
       return res.sendStatus(200);
@@ -116,16 +140,13 @@ async function startServer() {
     }
     try {
       if (req.file) {
-        let originalName = req.file.originalname;
-        try {
-          originalName = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
-        } catch {}
+        const cleanName = safeCleanFilename(req.file.originalname);
         const fileUrl = `/uploads/${encodeURIComponent(req.file.filename)}`;
         return res.json({
           success: true,
           url: fileUrl,
           filename: req.file.filename,
-          originalName: originalName,
+          originalName: cleanName,
           size: req.file.size
         });
       }
@@ -136,8 +157,8 @@ async function startServer() {
         const cleanBase64 = base64.replace(/^data:.*?;base64,/, '');
         const buffer = Buffer.from(cleanBase64, 'base64');
         const timestamp = Date.now();
-        const sanitizedName = filename.replace(/[^a-zA-Z0-9._가-힣-]/g, '_');
-        const savedFileName = `${timestamp}_${sanitizedName}`;
+        const cleanName = safeCleanFilename(filename);
+        const savedFileName = `${timestamp}_${cleanName}`;
         const filePath = path.join(uploadsDir, savedFileName);
 
         await fs.promises.writeFile(filePath, buffer);
@@ -152,7 +173,7 @@ async function startServer() {
         });
       }
 
-      return res.status(200).json({ success: true, message: "No binary content uploaded" });
+      return res.status(400).json({ success: false, error: "전송된 파일이 없습니다." });
     } catch (error: any) {
       console.error("File upload error:", error);
       res.status(500).json({ success: false, error: error.message || "Upload failed" });
@@ -265,14 +286,14 @@ async function startServer() {
         const cleanFiles = await Promise.all(project.files.map(async (file: any) => {
           let sanitizedFile = { ...file };
 
-          // Convert dataUrl if base64
+          // Convert dataUrl if base64 to server file
           if (sanitizedFile.dataUrl && typeof sanitizedFile.dataUrl === 'string' && sanitizedFile.dataUrl.startsWith('data:')) {
             try {
               const cleanBase64 = sanitizedFile.dataUrl.replace(/^data:.*?;base64,/, '');
               const buffer = Buffer.from(cleanBase64, 'base64');
               const timestamp = Date.now();
-              const sanitizedName = (sanitizedFile.name || 'file').replace(/[^a-zA-Z0-9._가-힣-]/g, '_');
-              const savedFileName = `${timestamp}_${sanitizedName}`;
+              const cleanName = safeCleanFilename(sanitizedFile.name || 'file');
+              const savedFileName = `${timestamp}_${cleanName}`;
               const filePath = path.join(uploadsDir, savedFileName);
               await fs.promises.writeFile(filePath, buffer);
               sanitizedFile.dataUrl = `/uploads/${encodeURIComponent(savedFileName)}`;
@@ -289,7 +310,8 @@ async function startServer() {
                   const cleanBase64 = si.dataUrl.replace(/^data:.*?;base64,/, '');
                   const buffer = Buffer.from(cleanBase64, 'base64');
                   const timestamp = Date.now();
-                  const savedImgName = `${timestamp}_sheet_${sIdx}_${(si.name || 'sheet').replace(/[^a-zA-Z0-9._가-힣-]/g, '_')}.jpg`;
+                  const cleanSheetName = safeCleanFilename(si.name || 'sheet');
+                  const savedImgName = `${timestamp}_sheet_${sIdx}_${cleanSheetName}.jpg`;
                   const imgPath = path.join(uploadsDir, savedImgName);
                   await fs.promises.writeFile(imgPath, buffer);
                   return { name: si.name, dataUrl: `/uploads/${encodeURIComponent(savedImgName)}` };

@@ -521,40 +521,37 @@ export const InfoView: React.FC<InfoViewProps> = ({
           fileBlob = await optimizeImageFile(file);
         }
 
-        // 1. Immediately backup to local IndexedDB (Zero latency local storage)
-        const fileDataUrl = await readFileAsDataUrl(fileBlob);
-        await saveLocalFileBlob(fileId, {
-          blob: fileBlob,
-          dataUrl: fileDataUrl,
-          name: file.name,
-          type: fileType
+        // 1. Upload binary file directly to server uploads folder
+        const formData = new FormData();
+        formData.append('file', fileBlob, file.name);
+
+        const uploadRes = await fetch('/api/upload-file', {
+          method: 'POST',
+          body: formData
         });
 
-        // 2. Upload binary file to server uploads folder
-        let savedUrl = '';
-        try {
-          const formData = new FormData();
-          formData.append('file', fileBlob, file.name);
-
-          const uploadRes = await fetch('/api/upload-file', {
-            method: 'POST',
-            body: formData
-          });
-
-          if (uploadRes.ok) {
-            const uploadJson = await uploadRes.json();
-            if (uploadJson.success && uploadJson.url) {
-              savedUrl = uploadJson.url;
-              fileSize = uploadJson.size || fileSize;
-            }
-          }
-        } catch (serverErr) {
-          console.warn('Server upload notice:', serverErr);
+        if (!uploadRes.ok) {
+          const errBody = await uploadRes.json().catch(() => ({}));
+          throw new Error(errBody.error || `서버 업로드 오류 (${uploadRes.status})`);
         }
 
-        // If server upload failed, fallback to storing base64 so mobile can still access via synced DB
-        if (!savedUrl) {
-          savedUrl = fileDataUrl;
+        const uploadJson = await uploadRes.json();
+        if (!uploadJson.success || !uploadJson.url) {
+          throw new Error(uploadJson.error || '업로드 URL 생성 실패');
+        }
+
+        const savedUrl = uploadJson.url;
+        fileSize = uploadJson.size || fileSize;
+
+        // 2. Cache raw Blob locally in IndexedDB for instant zero-latency loading
+        try {
+          await saveLocalFileBlob(fileId, {
+            blob: fileBlob,
+            name: file.name,
+            type: fileType
+          });
+        } catch (cacheErr) {
+          console.warn('Local cache notice:', cacheErr);
         }
 
         const newFileObj: InfoFile = {
