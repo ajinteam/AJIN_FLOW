@@ -14,10 +14,9 @@ const REDIS_FLOW_KEY = "ajin_flow26_Backup";
 const REDIS_INFO_KEY = "ajin_info26";
 
 // Safe Unicode-aware filename cleaner
-function safeCleanFilename(rawName: string): string {
+function cleanAndSafeFilename(rawName: string): string {
   if (!rawName) return 'file';
   let name = rawName;
-  // If latin-1 mojibake was sent by older client, decode only if safe
   try {
     if (/^[\x00-\xFF]+$/.test(name) && /[\x80-\xFF]/.test(name)) {
       const candidate = Buffer.from(name, 'latin1').toString('utf8');
@@ -27,8 +26,8 @@ function safeCleanFilename(rawName: string): string {
     }
   } catch {}
 
-  // Strip only truly illegal OS path characters (\ / : * ? " < > | and control characters)
-  // Keep Korean, Japanese, Chinese (Kanji/Hanja like 系, 形), commas, brackets, spaces, etc.
+  // Strip only dangerous characters: \ / : * ? " < > | \r \n \t
+  // Preserve Korean, Japanese, Kanji (系, 形), Ampersand (&), brackets (), spaces, dashes, commas, etc.
   const cleaned = name.replace(/[\\/:*?"<>|\r\n\t]/g, '_').trim();
   return cleaned || 'file';
 }
@@ -54,41 +53,48 @@ async function startServer() {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
 
-  // 1. Raw binary streaming endpoint (Placed before express.json body parsers for pure stream piping)
+  // 1. Raw Binary Streaming Endpoint (Pipes directly to disk)
   app.all("/api/upload-raw", (req, res) => {
     if (req.method === "OPTIONS") return res.sendStatus(200);
     if (req.method === "GET") return res.json({ status: "ready" });
 
     try {
       let rawName = (req.query.filename as string) || (req.headers['x-file-name'] as string) || 'file';
-      try {
-        rawName = decodeURIComponent(rawName);
-      } catch {}
+      try { rawName = decodeURIComponent(rawName); } catch {}
 
-      const cleanName = safeCleanFilename(rawName);
+      const cleanName = cleanAndSafeFilename(rawName);
       const timestamp = Date.now();
       const savedFileName = `${timestamp}_${cleanName}`;
       const filePath = path.join(uploadsDir, savedFileName);
 
       const writeStream = fs.createWriteStream(filePath);
-
       req.pipe(writeStream);
 
       writeStream.on('finish', () => {
-        const stats = fs.statSync(filePath);
-        const fileUrl = `/uploads/${encodeURIComponent(savedFileName)}`;
-        return res.json({
-          success: true,
-          url: fileUrl,
-          filename: savedFileName,
-          originalName: cleanName,
-          size: stats.size
-        });
+        try {
+          const stats = fs.statSync(filePath);
+          const fileUrl = `/uploads/${encodeURIComponent(savedFileName)}`;
+          return res.json({
+            success: true,
+            url: fileUrl,
+            filename: savedFileName,
+            originalName: cleanName,
+            size: stats.size
+          });
+        } catch (e: any) {
+          return res.json({
+            success: true,
+            url: `/uploads/${encodeURIComponent(savedFileName)}`,
+            filename: savedFileName,
+            originalName: cleanName,
+            size: 0
+          });
+        }
       });
 
       writeStream.on('error', (err) => {
         console.error("Stream write error:", err);
-        return res.status(500).json({ success: false, error: err.message || "파일 저장 중 오류가 발생했습니다." });
+        return res.status(500).json({ success: false, error: err.message || "파일 스트림 저장 오류" });
       });
     } catch (err: any) {
       console.error("upload-raw error:", err);
@@ -106,7 +112,7 @@ async function startServer() {
       cb(null, uploadsDir);
     },
     filename: (req, file, cb) => {
-      const cleanName = safeCleanFilename(file.originalname);
+      const cleanName = cleanAndSafeFilename(file.originalname);
       const timestamp = Date.now();
       cb(null, `${timestamp}_${cleanName}`);
     }
@@ -117,7 +123,7 @@ async function startServer() {
     limits: { fileSize: 100 * 1024 * 1024 } // 100MB per file limit
   });
 
-  // Safe wrapper for multer middleware so errors NEVER fall through to Vite
+  // Safe wrapper for multer middleware
   const handleUploadMiddleware = (req: express.Request, res: express.Response, next: express.NextFunction) => {
     upload.single('file')(req, res, (err) => {
       if (err) {
@@ -188,7 +194,7 @@ async function startServer() {
     try {
       // 1. Multipart/form-data upload via Multer
       if (req.file) {
-        const cleanName = safeCleanFilename(req.file.originalname);
+        const cleanName = cleanAndSafeFilename(req.file.originalname);
         const fileUrl = `/uploads/${encodeURIComponent(req.file.filename)}`;
         return res.json({
           success: true,
@@ -205,7 +211,7 @@ async function startServer() {
         const cleanBase64 = base64.replace(/^data:.*?;base64,/, '');
         const buffer = Buffer.from(cleanBase64, 'base64');
         const timestamp = Date.now();
-        const cleanName = safeCleanFilename(filename);
+        const cleanName = cleanAndSafeFilename(filename);
         const savedFileName = `${timestamp}_${cleanName}`;
         const filePath = path.join(uploadsDir, savedFileName);
 
@@ -348,7 +354,7 @@ async function startServer() {
               const cleanBase64 = sanitizedFile.dataUrl.replace(/^data:.*?;base64,/, '');
               const buffer = Buffer.from(cleanBase64, 'base64');
               const timestamp = Date.now();
-              const cleanName = safeCleanFilename(sanitizedFile.name || 'file');
+              const cleanName = cleanAndSafeFilename(sanitizedFile.name || 'file');
               const savedFileName = `${timestamp}_${cleanName}`;
               const filePath = path.join(uploadsDir, savedFileName);
               await fs.promises.writeFile(filePath, buffer);
@@ -366,7 +372,7 @@ async function startServer() {
                   const cleanBase64 = si.dataUrl.replace(/^data:.*?;base64,/, '');
                   const buffer = Buffer.from(cleanBase64, 'base64');
                   const timestamp = Date.now();
-                  const cleanSheetName = safeCleanFilename(si.name || 'sheet');
+                  const cleanSheetName = cleanAndSafeFilename(si.name || 'sheet');
                   const savedImgName = `${timestamp}_sheet_${sIdx}_${cleanSheetName}.jpg`;
                   const imgPath = path.join(uploadsDir, savedImgName);
                   await fs.promises.writeFile(imgPath, buffer);

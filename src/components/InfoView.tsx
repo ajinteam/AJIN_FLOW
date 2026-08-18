@@ -521,56 +521,42 @@ export const InfoView: React.FC<InfoViewProps> = ({
           fileBlob = await optimizeImageFile(file);
         }
 
-        // 1. Upload binary file directly to server uploads folder
-        let savedUrl = '';
-        let uploadErrorMsg = '';
-
-        // Strategy A: Direct Raw Binary Streaming (Fastest, zero multipart overhead, supports 100MB+)
+        // 1. Immediately cache raw Blob in local IndexedDB for zero-latency instant offline opening
         try {
-          const rawRes = await fetch(`/api/upload-raw?filename=${encodeURIComponent(file.name)}`, {
+          await saveLocalFileBlob(fileId, {
+            blob: fileBlob,
+            name: file.name,
+            type: fileType
+          });
+        } catch (cacheErr) {
+          console.warn('Local cache notice:', cacheErr);
+        }
+
+        // 2. Upload to server storage (Strategy A: FormData Multipart, Strategy B: Base64 JSON)
+        let savedUrl = '';
+
+        // Strategy A: Standard FormData
+        try {
+          const formData = new FormData();
+          formData.append('file', fileBlob, file.name);
+
+          const uploadRes = await fetch('/api/upload-file', {
             method: 'POST',
-            headers: {
-              'Content-Type': file.type || 'application/octet-stream',
-              'X-File-Name': encodeURIComponent(file.name)
-            },
-            body: fileBlob
+            body: formData
           });
 
-          if (rawRes.ok) {
-            const rawJson = await rawRes.json().catch(() => null);
-            if (rawJson?.success && rawJson?.url) {
-              savedUrl = rawJson.url;
-              fileSize = rawJson.size || fileSize;
+          if (uploadRes.ok) {
+            const uploadJson = await uploadRes.json().catch(() => null);
+            if (uploadJson?.success && uploadJson?.url) {
+              savedUrl = uploadJson.url;
+              fileSize = uploadJson.size || fileSize;
             }
           }
-        } catch (rawErr: any) {
-          console.warn('Raw streaming attempt notice:', rawErr);
+        } catch (formErr) {
+          console.warn('FormData upload notice:', formErr);
         }
 
-        // Strategy B: Multipart FormData upload
-        if (!savedUrl) {
-          try {
-            const formData = new FormData();
-            formData.append('file', fileBlob, file.name);
-
-            const uploadRes = await fetch('/api/upload-file', {
-              method: 'POST',
-              body: formData
-            });
-
-            if (uploadRes.ok) {
-              const uploadJson = await uploadRes.json().catch(() => null);
-              if (uploadJson?.success && uploadJson?.url) {
-                savedUrl = uploadJson.url;
-                fileSize = uploadJson.size || fileSize;
-              }
-            }
-          } catch (formErr) {
-            console.warn('FormData upload attempt notice:', formErr);
-          }
-        }
-
-        // Strategy C: JSON Base64 upload fallback
+        // Strategy B: Base64 JSON payload
         if (!savedUrl) {
           try {
             const base64Data = await readFileAsDataUrl(fileBlob);
@@ -590,25 +576,15 @@ export const InfoView: React.FC<InfoViewProps> = ({
                 fileSize = jsonResult.size || fileSize;
               }
             }
-          } catch (jsonErr: any) {
-            console.warn('JSON upload attempt notice:', jsonErr);
-            uploadErrorMsg = jsonErr?.message || '';
+          } catch (jsonErr) {
+            console.warn('JSON upload notice:', jsonErr);
           }
         }
 
+        // Strategy C: Fallback to local storage URL if server is temporarily unreachable
         if (!savedUrl) {
-          throw new Error(`파일 '${file.name}' 저장에 실패했습니다. (${uploadErrorMsg || '서버 통신 오류'})`);
-        }
-
-        // 2. Cache raw Blob locally in IndexedDB for instant zero-latency loading
-        try {
-          await saveLocalFileBlob(fileId, {
-            blob: fileBlob,
-            name: file.name,
-            type: fileType
-          });
-        } catch (cacheErr) {
-          console.warn('Local cache notice:', cacheErr);
+          const base64Fallback = await readFileAsDataUrl(fileBlob);
+          savedUrl = base64Fallback;
         }
 
         const newFileObj: InfoFile = {
