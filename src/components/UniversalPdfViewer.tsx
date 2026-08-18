@@ -12,10 +12,8 @@ import {
   X,
   ArrowUp,
   ArrowDown,
-  RefreshCw,
   Maximize2,
-  List,
-  Columns
+  List
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -24,17 +22,7 @@ function cn(...inputs: any[]) {
   return twMerge(clsx(inputs));
 }
 
-// Configure pdfjs worker dynamically matching the installed version
-try {
-  if (typeof window !== 'undefined') {
-    const version = pdfjsLib.version || '4.10.38';
-    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
-  }
-} catch (e) {
-  console.warn('PDF Worker setup notice:', e);
-}
-
-// Convert Base64 data URL to Uint8Array for zero-overhead ultra-fast binary loading
+// Convert Base64 data URL to Uint8Array safely for zero-overhead fast parsing
 function base64ToUint8Array(dataUrl: string): Uint8Array | null {
   try {
     const base64Index = dataUrl.indexOf(';base64,');
@@ -69,11 +57,10 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
   const [pdfDoc, setPdfDoc] = useState<any>(null);
   const [numPages, setNumPages] = useState<number>(0);
   const [currentPage, setCurrentPage] = useState<number>(initialPage || 1);
-  const [scale, setScale] = useState<number>(1.1);
+  const [scale, setScale] = useState<number>(1.0);
   const [rotation, setRotation] = useState<number>(0);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [useIframeFallback, setUseIframeFallback] = useState<boolean>(false);
   const [showSidebar, setShowSidebar] = useState<boolean>(true);
 
   // Search in Document state
@@ -101,12 +88,11 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
   const touchStartScaleRef = useRef<number>(scale);
   const lastTapRef = useRef<number>(0);
 
-  // Load PDF Document safely & quickly with fallbacks
+  // Load PDF Document safely without Web Worker (Zero worker network crashes)
   useEffect(() => {
     let isMounted = true;
     setLoading(true);
     setError(null);
-    setUseIframeFallback(false);
     setCurrentPage(initialPage || 1);
 
     if (!url) {
@@ -119,27 +105,41 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
       try {
         let loadingTask: any;
 
-        // If URL is base64, convert to Uint8Array for 10x faster parsing & lower memory on mobile
+        // If URL is base64
         if (url.startsWith('data:')) {
           const binaryData = base64ToUint8Array(url);
           if (binaryData) {
             loadingTask = pdfjsLib.getDocument({
               data: binaryData,
-              cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/cmaps/',
               cMapPacked: true,
-              enableXfa: true,
+              enableXfa: false,
+              disableWorker: true,
             });
           }
         }
 
         if (!loadingTask) {
-          // If URL is relative or blob or external
-          loadingTask = pdfjsLib.getDocument({
-            url,
-            cMapUrl: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/cmaps/',
-            cMapPacked: true,
-            enableXfa: true,
-          });
+          // If URL is local upload /uploads/... or http URL
+          // Fetch arrayBuffer first for rock-solid stability across mobile & iOS
+          try {
+            const res = await fetch(url);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const arrayBuffer = await res.arrayBuffer();
+            loadingTask = pdfjsLib.getDocument({
+              data: new Uint8Array(arrayBuffer),
+              cMapPacked: true,
+              enableXfa: false,
+              disableWorker: true,
+            });
+          } catch (fetchErr) {
+            // Fallback directly with url
+            loadingTask = pdfjsLib.getDocument({
+              url,
+              cMapPacked: true,
+              enableXfa: false,
+              disableWorker: true,
+            });
+          }
         }
 
         const doc = await loadingTask.promise;
@@ -149,9 +149,9 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
           setLoading(false);
         }
       } catch (err: any) {
-        console.warn('PDF.js loading failed, switching to native embed fallback:', err);
+        console.error('PDF.js loading failed:', err);
         if (isMounted) {
-          setUseIframeFallback(true);
+          setError(err?.message || 'PDF 파일을 불러올 수 없습니다.');
           setLoading(false);
         }
       }
@@ -343,27 +343,6 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
       setScale(targetScale);
     }
   };
-
-  // If Iframe Fallback is triggered (e.g. mobile PDF native viewer)
-  if (useIframeFallback) {
-    return (
-      <div className="w-full h-full flex flex-col bg-slate-950 overflow-hidden">
-        <div className="bg-slate-900 border-b border-slate-800 px-3 py-2 flex items-center justify-between text-xs text-slate-300">
-          <div className="flex items-center gap-2 truncate">
-            <span className="font-bold text-white truncate">{fileName}</span>
-            <span className="bg-emerald-800/80 text-emerald-200 px-2 py-0.5 rounded text-[11px] font-bold">PDF 도면</span>
-          </div>
-        </div>
-        <div className="flex-1 w-full h-full bg-white">
-          <iframe
-            src={`${url}#toolbar=1&navpanes=0`}
-            className="w-full h-full border-0"
-            title={fileName}
-          />
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="flex flex-col w-full h-full bg-slate-950 text-slate-100 overflow-hidden select-none">
@@ -612,13 +591,6 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
               <AlertCircle size={40} className="text-rose-400 mb-3" />
               <h4 className="text-base font-bold text-white mb-1">도면을 표시할 수 없습니다</h4>
               <p className="text-xs text-slate-400 mb-4">{error}</p>
-              <button
-                onClick={() => setUseIframeFallback(true)}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-2 cursor-pointer mb-2"
-              >
-                <RefreshCw size={14} />
-                <span>직접 뷰어로 전환</span>
-              </button>
             </div>
           )}
 
@@ -696,8 +668,8 @@ const PdfPageCanvas: React.FC<PdfPageCanvasProps> = ({ pdfDoc, pageNum, scale, r
         const context = canvas.getContext('2d', { alpha: false });
         if (!context) return;
 
-        // Cap pixel ratio to 1.5 for memory safety and crispness
-        const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+        // Cap pixel ratio to 1.25 for absolute mobile stability and crisp text
+        const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.25);
         canvas.width = Math.floor(viewport.width * pixelRatio);
         canvas.height = Math.floor(viewport.height * pixelRatio);
         canvas.style.width = `${Math.floor(viewport.width)}px`;

@@ -29,7 +29,6 @@ import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { UniversalPdfViewer } from './UniversalPdfViewer';
-import { InAppExcelViewer } from './InAppExcelViewer';
 import { saveLocalFileBlob, getLocalFileBlob } from '../lib/storage';
 
 function cn(...inputs: any[]) {
@@ -150,8 +149,10 @@ async function openExcelDirectly(file: InfoFile) {
     }
 
     if (!blob && file.dataUrl) {
-      const res = await fetch(file.dataUrl);
-      blob = await res.blob();
+      if (file.dataUrl.startsWith('data:')) {
+        const res = await fetch(file.dataUrl);
+        blob = await res.blob();
+      }
     }
 
     const mimeType = file.name.endsWith('.xls')
@@ -894,19 +895,21 @@ export const InfoView: React.FC<InfoViewProps> = ({
                       문서 {fileCount}개
                     </span>
 
-                    {/* Direct Excel In-App Open Button right on card */}
+                    {/* Direct Excel Open Button right on card */}
                     {excelCount > 0 && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          const excelIdx = (project.files || []).findIndex((f) => f.type === 'excel');
-                          openViewer(project, excelIdx >= 0 ? excelIdx : 0);
+                          const excelFile = (project.files || []).find((f) => f.type === 'excel');
+                          if (excelFile) {
+                            openExcelDirectly(excelFile);
+                          }
                         }}
                         className="bg-emerald-800 hover:bg-emerald-700 active:scale-95 text-white px-2.5 py-1 rounded-lg text-[11px] font-black flex items-center gap-1.5 shadow-sm border border-emerald-600 transition-all cursor-pointer"
-                        title="앱 화면에서 엑셀 시트 즉시 열람"
+                        title="스마트폰/PC 기본 엑셀 앱으로 바로 열기"
                       >
                         <FileSpreadsheet size={13} className="text-emerald-300" />
-                        <span>엑셀 보기 ({excelCount})</span>
+                        <span>엑셀 열기 ({excelCount})</span>
                       </button>
                     )}
 
@@ -1141,13 +1144,26 @@ export const InfoView: React.FC<InfoViewProps> = ({
 
                         {/* Rendering by Type */}
                         <div className="flex-1 overflow-hidden flex flex-col">
-                          {/* 1. Excel File In-App Viewer (Instant Sheet Tabs & Grid with Zero Download) */}
+                          {/* 1. Excel File Direct Open Card (Opens in Native Excel / Sheets without In-App viewer) */}
                           {currentFile.type === 'excel' && (
-                            <InAppExcelViewer
-                              fileId={currentFile.id}
-                              dataUrl={currentFile.dataUrl}
-                              fileName={currentFile.name}
-                            />
+                            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-slate-900">
+                              <div className="w-16 h-16 bg-emerald-950/80 border border-emerald-500/40 rounded-2xl flex items-center justify-center mb-4 text-emerald-400 shadow-lg">
+                                <FileSpreadsheet size={36} />
+                              </div>
+                              <h4 className="text-lg font-black text-white mb-2">{currentFile.name}</h4>
+                              <p className="text-xs text-slate-400 max-w-sm mb-6">
+                                PC는 Microsoft Excel로, 모바일은 구글 스프레드시트/엑셀 앱으로 바로 열립니다.
+                              </p>
+                              <button
+                                onClick={async () => {
+                                  await openExcelDirectly(currentFile);
+                                }}
+                                className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-black flex items-center gap-2 shadow-lg shadow-emerald-900/40 transition-all cursor-pointer"
+                              >
+                                <ExternalLink size={16} />
+                                <span>기기 엑셀 앱으로 바로 열기</span>
+                              </button>
+                            </div>
                           )}
 
                           {/* 2. PDF File Viewer (Zero-Lag, Lightweight & Smooth) */}
