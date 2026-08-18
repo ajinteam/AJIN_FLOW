@@ -7,7 +7,6 @@ import {
   Trash2, 
   Edit2, 
   X, 
-  Download, 
   CheckCircle, 
   FileSpreadsheet, 
   Image as ImageIcon,
@@ -22,22 +21,14 @@ import {
   ZoomIn,
   ZoomOut,
   RotateCw,
-  Move,
   Clock,
-  Maximize2,
-  Minimize2,
-  Table as TableIcon,
-  Eye,
-  ArrowRight,
   ArrowUpDown,
-  Sparkles
+  ExternalLink
 } from 'lucide-react';
-import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { UniversalPdfViewer } from './UniversalPdfViewer';
-import { convertSheetToDocumentImage } from '../lib/excelToImage';
 import { saveLocalFileBlob, getLocalFileBlob } from '../lib/storage';
 
 function cn(...inputs: any[]) {
@@ -118,49 +109,6 @@ function readFileAsDataUrl(blob: Blob | File): Promise<string> {
   });
 }
 
-// Utility: Parse Excel sheets & generate crisp document images
-async function processExcelFile(file: File): Promise<{
-  sheets: { name: string; data: any[][] }[];
-  sheetImages: { name: string; dataUrl: string }[];
-}> {
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      try {
-        const buffer = e.target?.result;
-        const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
-        const sheets: { name: string; data: any[][] }[] = [];
-        const sheetImages: { name: string; dataUrl: string }[] = [];
-
-        for (const sheetName of workbook.SheetNames) {
-          const worksheet = workbook.Sheets[sheetName];
-          const sheetData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' }) as any[][];
-          const cleanedData = sheetData.filter((row) => row.some((cell) => cell !== '' && cell !== null && cell !== undefined));
-          const finalData = cleanedData.length > 0 ? cleanedData : sheetData;
-          sheets.push({ name: sheetName, data: finalData });
-
-          // Convert sheet to high-res crisp document image
-          try {
-            const converted = await convertSheetToDocumentImage(sheetName, finalData, file.name);
-            if (converted && converted.dataUrl) {
-              sheetImages.push({ name: sheetName, dataUrl: converted.dataUrl });
-            }
-          } catch (convErr) {
-            console.warn('Sheet image conversion notice:', convErr);
-          }
-        }
-
-        resolve({ sheets, sheetImages });
-      } catch (err) {
-        console.warn('Excel parse notice:', err);
-        resolve({ sheets: [], sheetImages: [] });
-      }
-    };
-    reader.onerror = () => resolve({ sheets: [], sheetImages: [] });
-    reader.readAsArrayBuffer(file);
-  });
-}
-
 // Calculate D-Day
 function getDDayInfo(targetDateStr: string | null | undefined): { text: string; isPast: boolean; days: number; rawDays: number } {
   if (!targetDateStr) return { text: 'D-DAY 미설정', isPast: false, days: 99999, rawDays: 99999 };
@@ -186,8 +134,8 @@ function getDDayInfo(targetDateStr: string | null | undefined): { text: string; 
   }
 }
 
-// Helper to open / download Excel file directly for native Excel app viewing on Mobile & PC
-async function openExcelInNativeApp(file: InfoFile) {
+// Direct Excel Native App Launcher for PC & Mobile (No in-app viewing, seamless execution)
+async function openExcelDirectly(file: InfoFile) {
   try {
     let blob: Blob | null = null;
     if (file.id) {
@@ -205,14 +153,14 @@ async function openExcelInNativeApp(file: InfoFile) {
       blob = await res.blob();
     }
 
+    const mimeType = file.name.endsWith('.xls')
+      ? 'application/vnd.ms-excel'
+      : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
     if (blob) {
-      // Ensure proper excel mime type for mobile intent
-      const excelBlob = new Blob([blob], {
-        type: file.name.endsWith('.xls')
-          ? 'application/vnd.ms-excel'
-          : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-      });
+      const excelBlob = new Blob([blob], { type: mimeType });
       const blobUrl = URL.createObjectURL(excelBlob);
+      
       const link = document.createElement('a');
       link.href = blobUrl;
       link.download = file.name;
@@ -223,7 +171,6 @@ async function openExcelInNativeApp(file: InfoFile) {
       return;
     }
 
-    // Fallback: direct href
     if (file.dataUrl) {
       const link = document.createElement('a');
       link.href = file.dataUrl;
@@ -304,6 +251,14 @@ export const InfoView: React.FC<InfoViewProps> = ({
   }, [isUploadModalOpen, isProjectModalOpen, viewerProject]);
 
   const openViewer = (project: InfoProject, fileIdx: number = 0) => {
+    // If project only has excel files or the clicked file is excel, launch directly
+    const targetFile = project.files?.[fileIdx];
+    if (targetFile && targetFile.type === 'excel' && (!project.files || project.files.length === 1)) {
+      openExcelDirectly(targetFile);
+      showAlert('엑셀 열람', `[${targetFile.name}] 기기 기본 엑셀 앱(Excel/스프레드시트)으로 바로 열었습니다.`, 'info');
+      return;
+    }
+
     try {
       window.history.pushState({ modal: 'info-viewer' }, '');
     } catch {}
@@ -542,7 +497,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
     });
   };
 
-  // Seamless Multi-Layer Upload Handler
+  // Upload Handler (Fast, no heavy canvas conversion overhead)
   const handleUploadFiles = async (targetProjectId: string, files: File[]) => {
     const targetProj = infoProjects.find((p) => p.id === targetProjectId);
     if (!targetProj) {
@@ -560,22 +515,18 @@ export const InfoView: React.FC<InfoViewProps> = ({
         const ext = file.name.split('.').pop()?.toLowerCase() || '';
         let fileType: 'pdf' | 'excel' | 'image' | 'other' = 'other';
         let fileSize = file.size;
-        let parsedSheets: { name: string; data: any[][] }[] | undefined = undefined;
         let fileBlob: Blob = file;
 
         if (ext === 'pdf') {
           fileType = 'pdf';
         } else if (['xlsx', 'xls', 'csv'].includes(ext)) {
           fileType = 'excel';
-          // Extract sheets for tabular rendering and document image generator
-          const excelResult = await processExcelFile(file);
-          parsedSheets = excelResult.sheets;
         } else if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'].includes(ext)) {
           fileType = 'image';
           fileBlob = await optimizeImageFile(file);
         }
 
-        // 1. Immediately backup to local IndexedDB (Zero latency, indestructible local storage)
+        // 1. Immediately backup to local IndexedDB (Zero latency local storage)
         const fileDataUrl = await readFileAsDataUrl(fileBlob);
         await saveLocalFileBlob(fileId, {
           blob: fileBlob,
@@ -603,10 +554,9 @@ export const InfoView: React.FC<InfoViewProps> = ({
             }
           }
         } catch (serverErr) {
-          console.warn('Server upload warning, using local cache:', serverErr);
+          console.warn('Server upload notice, fallback to local cache:', serverErr);
         }
 
-        // Lightweight reference URL (avoid bloating Redis with megabytes of base64)
         if (!savedUrl) {
           savedUrl = `/uploads/${Date.now()}_${encodeURIComponent(file.name)}`;
         }
@@ -617,8 +567,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
           type: fileType,
           size: fileSize,
           dataUrl: savedUrl,
-          uploadedAt: new Date().toISOString(),
-          parsedSheets
+          uploadedAt: new Date().toISOString()
         };
 
         // Overwrite if same file name exists, otherwise append
@@ -630,14 +579,12 @@ export const InfoView: React.FC<InfoViewProps> = ({
         }
       }
 
-      // Automatically place Excel files first
+      // Place Excel files first
       existingFiles = sortFilesWithExcelFirst(existingFiles);
 
       const updated = infoProjects.map((p) => (p.id === targetProjectId ? { ...p, files: existingFiles } : p));
       
-      // Auto close modal
       setIsUploadModalOpen(false);
-
       await onSaveProjects(updated);
 
       if (viewerProject?.id === targetProjectId) {
@@ -645,7 +592,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
         if (updatedTarget) setViewerProject(updatedTarget);
       }
 
-      showAlert('업로드 완료', `${files.length}개 파일이 정상 등록되었습니다. (엑셀 최우선 정렬 & 고화질 문서 이미지 자동 변환 완료)`, 'success');
+      showAlert('업로드 완료', `${files.length}개 파일이 정상 등록되었습니다.`, 'success');
     } catch (err: any) {
       console.error('File upload error:', err);
       setIsUploadModalOpen(false);
@@ -689,7 +636,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
   const docSearchResults = useMemo(() => {
     if (!viewerProject || !docSearchQuery.trim()) return [];
     const query = docSearchQuery.toLowerCase().trim();
-    const results: { fileIndex: number; fileName: string; type: string; sheetName?: string; snippet: string }[] = [];
+    const results: { fileIndex: number; fileName: string; type: string; snippet: string }[] = [];
 
     (viewerProject.files || []).forEach((file, fIdx) => {
       if (file.name.toLowerCase().includes(query)) {
@@ -698,34 +645,6 @@ export const InfoView: React.FC<InfoViewProps> = ({
           fileName: file.name,
           type: file.type,
           snippet: `파일명 일치: ${file.name}`
-        });
-      }
-
-      if (file.type === 'excel' && file.parsedSheets) {
-        file.parsedSheets.forEach((sheet) => {
-          if (sheet.name.toLowerCase().includes(query)) {
-            results.push({
-              fileIndex: fIdx,
-              fileName: file.name,
-              type: 'excel',
-              sheetName: sheet.name,
-              snippet: `시트명 일치: [${sheet.name}]`
-            });
-          }
-          for (let r = 0; r < sheet.data.length; r++) {
-            const row = sheet.data[r];
-            const rowStr = row.map((c) => String(c || '')).join(' ');
-            if (rowStr.toLowerCase().includes(query)) {
-              results.push({
-                fileIndex: fIdx,
-                fileName: file.name,
-                type: 'excel',
-                sheetName: sheet.name,
-                snippet: `[${sheet.name}] ${r + 1}행: ${rowStr.substring(0, 50)}...`
-              });
-              break;
-            }
-          }
         });
       }
     });
@@ -974,7 +893,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
                   </div>
                 </div>
 
-                {/* Bottom Bar: Attached File Badge & Click Prompt */}
+                {/* Bottom Bar: Attached File Badges */}
                 <div className="mt-3 pt-2.5 border-t border-white/20 flex items-center justify-between text-xs text-emerald-100 flex-wrap gap-2">
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <span className="font-bold flex items-center gap-1 bg-black/25 px-2 py-0.5 rounded-md text-white">
@@ -982,22 +901,22 @@ export const InfoView: React.FC<InfoViewProps> = ({
                       문서 {fileCount}개
                     </span>
 
-                    {/* Quick Excel App View Button right on card */}
+                    {/* Direct Excel Open Button right on card */}
                     {excelCount > 0 && (
                       <button
                         onClick={async (e) => {
                           e.stopPropagation();
                           const firstExcel = (project.files || []).find((f) => f.type === 'excel');
                           if (firstExcel) {
-                            await openExcelInNativeApp(firstExcel);
-                            showAlert('엑셀 열람', `[${firstExcel.name}] 파일을 기기 기본 엑셀 앱으로 열었습니다.`, 'info');
+                            await openExcelDirectly(firstExcel);
+                            showAlert('엑셀 열람', `[${firstExcel.name}] 기기 기본 엑셀 앱으로 바로 열었습니다.`, 'info');
                           }
                         }}
                         className="bg-emerald-800 hover:bg-emerald-700 active:scale-95 text-white px-2.5 py-1 rounded-lg text-[11px] font-black flex items-center gap-1.5 shadow-sm border border-emerald-600 transition-all cursor-pointer"
-                        title="기기에 설치된 엑셀 앱으로 즉시 열기"
+                        title="기기 엑셀 앱(PC: Excel / 모바일: 스프레드시트)으로 즉시 열기"
                       >
                         <FileSpreadsheet size={13} className="text-emerald-300" />
-                        <span>엑셀 앱으로 열기 ({excelCount})</span>
+                        <span>엑셀 열기 ({excelCount})</span>
                       </button>
                     )}
 
@@ -1016,7 +935,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
                   </div>
 
                   <div className="flex items-center gap-1 font-bold text-white group-hover:translate-x-0.5 transition-transform ml-auto">
-                    <span>도면/문서 뷰어 열기</span>
+                    <span>도면/문서 보기</span>
                     <ChevronRight size={15} />
                   </div>
                 </div>
@@ -1027,7 +946,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* 1. Fullscreen Document & Excel Viewer Modal                               */}
+      {/* 1. Fullscreen Document Viewer Modal (PDF & Images)                         */}
       {/* ========================================================================= */}
       <AnimatePresence>
         {viewerProject && (
@@ -1063,7 +982,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
                     <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
                     <input
                       type="text"
-                      placeholder="도면/엑셀/시트 단어 검색..."
+                      placeholder="파일명 검색..."
                       value={docSearchQuery}
                       onChange={(e) => setDocSearchQuery(e.target.value)}
                       className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-8 pr-7 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-400"
@@ -1093,7 +1012,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
                 <div className="bg-slate-950 border-b border-emerald-500/40 px-3 py-2 text-xs flex items-center gap-2 overflow-x-auto no-scrollbar shrink-0">
                   <span className="text-emerald-400 font-bold shrink-0">검색 결과 ({docSearchResults.length}):</span>
                   {docSearchResults.length === 0 ? (
-                    <span className="text-slate-500">일치하는 문서나 내용이 없습니다.</span>
+                    <span className="text-slate-500">일치하는 문서가 없습니다.</span>
                   ) : (
                     docSearchResults.map((res, rIdx) => (
                       <button
@@ -1104,8 +1023,6 @@ export const InfoView: React.FC<InfoViewProps> = ({
                         className="bg-slate-800 hover:bg-emerald-900/60 text-slate-200 hover:text-emerald-200 border border-slate-700 hover:border-emerald-500/50 px-2.5 py-1 rounded-md shrink-0 flex items-center gap-1.5 transition-all text-[11px] cursor-pointer"
                       >
                         <span className="font-bold text-emerald-400">{res.fileName}</span>
-                        <ArrowRight size={11} className="text-slate-500" />
-                        <span className="text-slate-300 truncate max-w-[150px]">{res.snippet}</span>
                       </button>
                     ))
                   )}
@@ -1133,7 +1050,14 @@ export const InfoView: React.FC<InfoViewProps> = ({
                         )}
                       >
                         <button
-                          onClick={() => setActiveFileIndex(idx)}
+                          onClick={() => {
+                            if (file.type === 'excel') {
+                              openExcelDirectly(file);
+                              showAlert('엑셀 열람', `[${file.name}] 기기 기본 엑셀 앱으로 바로 열었습니다.`, 'info');
+                            } else {
+                              setActiveFileIndex(idx);
+                            }
+                          }}
                           className="flex items-center gap-1.5 max-w-[160px] md:max-w-[220px] truncate cursor-pointer text-left"
                         >
                           {file.type === 'excel' && <FileSpreadsheet size={14} className="text-emerald-400 shrink-0" />}
@@ -1141,6 +1065,9 @@ export const InfoView: React.FC<InfoViewProps> = ({
                           {file.type === 'image' && <ImageIcon size={14} className="text-amber-400 shrink-0" />}
                           {file.type === 'other' && <FileCheck size={14} className="text-blue-400 shrink-0" />}
                           <span className="truncate">{file.name}</span>
+                          {file.type === 'excel' && (
+                            <span className="text-[10px] text-emerald-400 bg-emerald-950 px-1 py-0.2 rounded">앱 실행</span>
+                          )}
                         </button>
 
                         {/* File Position Order Adjusters (Left / Right) */}
@@ -1179,7 +1106,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
                     </div>
                     <h4 className="text-base font-bold text-slate-200 mb-1">업로드된 파일이 없습니다</h4>
                     <p className="text-xs text-slate-400 max-w-xs">
-                      상단의 [업로드] 버튼을 통해 엑셀(PO, PACKING), 작업지시서(PDF), 사진을 등록할 수 있습니다.
+                      상단의 [업로드] 버튼을 통해 작업지시서(PDF), 엑셀, 사진을 등록할 수 있습니다.
                     </p>
                   </div>
                 ) : (
@@ -1202,13 +1129,13 @@ export const InfoView: React.FC<InfoViewProps> = ({
                               <span>업로드: {formatDateTime(currentFile.uploadedAt)}</span>
                             </div>
                           </div>
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            {/* Native Excel App Open Button */}
+                          <div className="flex items-center gap-2 shrink-0">
+                            {/* Direct Excel App Open Button */}
                             {currentFile.type === 'excel' && (
                               <button
                                 onClick={async () => {
-                                  await openExcelInNativeApp(currentFile);
-                                  showAlert('엑셀 열람', `[${currentFile.name}] 기기 기본 엑셀 앱(Excel/한컴/구글시트)으로 실행했습니다.`, 'info');
+                                  await openExcelDirectly(currentFile);
+                                  showAlert('엑셀 열람', `[${currentFile.name}] 기기 기본 엑셀 앱으로 바로 열었습니다.`, 'info');
                                 }}
                                 className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-sm transition-all cursor-pointer"
                                 title="스마트폰/PC 기본 엑셀 앱으로 열기"
@@ -1218,29 +1145,10 @@ export const InfoView: React.FC<InfoViewProps> = ({
                               </button>
                             )}
 
-                            <button
-                              onClick={async () => {
-                                if (currentFile.type === 'excel') {
-                                  await openExcelInNativeApp(currentFile);
-                                } else {
-                                  const link = document.createElement('a');
-                                  link.href = currentFile.dataUrl;
-                                  link.download = currentFile.name;
-                                  document.body.appendChild(link);
-                                  link.click();
-                                  document.body.removeChild(link);
-                                }
-                              }}
-                              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs transition-all cursor-pointer"
-                              title="파일 다운로드"
-                            >
-                              <Download size={13} />
-                              <span className="hidden sm:inline">다운로드</span>
-                            </button>
                             {isAdmin && (
                               <button
                                 onClick={() => handleDeleteFile(viewerProject.id, currentFile.id)}
-                                className="p-1 text-rose-400 hover:bg-rose-950/50 rounded-lg transition-all cursor-pointer"
+                                className="p-1 text-rose-400 hover:bg-rose-950/50 rounded-lg transition-all cursor-pointer ml-2"
                                 title="파일 삭제"
                               >
                                 <Trash2 size={15} />
@@ -1251,12 +1159,30 @@ export const InfoView: React.FC<InfoViewProps> = ({
 
                         {/* Rendering by Type */}
                         <div className="flex-1 overflow-hidden flex flex-col">
-                          {/* 1. Excel File Viewer (Native App Launch + Clean Sheet Preview) */}
+                          {/* 1. Excel File Prompt Box (Direct Launch) */}
                           {currentFile.type === 'excel' && (
-                            <ExcelNativeAndDocumentViewer file={currentFile} onOpenNative={() => openExcelInNativeApp(currentFile)} />
+                            <div className="flex-1 flex flex-col items-center justify-center p-8 bg-slate-950 text-center">
+                              <div className="w-16 h-16 bg-emerald-950/80 text-emerald-400 rounded-3xl flex items-center justify-center mb-4 border border-emerald-800 shadow-xl">
+                                <FileSpreadsheet size={36} />
+                              </div>
+                              <h4 className="text-lg font-black text-white mb-1.5">{currentFile.name}</h4>
+                              <p className="text-xs text-slate-400 max-w-sm mb-6 leading-relaxed">
+                                PC는 Microsoft Excel, 모바일은 구글 스프레드시트/Excel 앱으로 바로 열립니다.
+                              </p>
+                              <button
+                                onClick={async () => {
+                                  await openExcelDirectly(currentFile);
+                                  showAlert('엑셀 열람', `[${currentFile.name}] 기기 기본 엑셀 앱으로 바로 열었습니다.`, 'info');
+                                }}
+                                className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-black text-sm rounded-2xl shadow-lg shadow-emerald-900/50 flex items-center gap-2 cursor-pointer transition-all"
+                              >
+                                <ExternalLink size={18} />
+                                <span>기기 엑셀 앱으로 바로 열기</span>
+                              </button>
+                            </div>
                           )}
 
-                          {/* 2. PDF File Viewer (Zero Left-Cut, Smooth Pan & Search) */}
+                          {/* 2. PDF File Viewer (Zero-Lag, Lightweight & Smooth) */}
                           {currentFile.type === 'pdf' && (
                             <PdfViewerWrapper
                               file={currentFile}
@@ -1264,7 +1190,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
                             />
                           )}
 
-                          {/* 3. Image Viewer (Zero Left-Cut Pan & Zoom) */}
+                          {/* 3. Image Viewer (Pan & Zoom without Left-Cut) */}
                           {currentFile.type === 'image' && (
                             <ImageViewer file={currentFile} />
                           )}
@@ -1274,15 +1200,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
                             <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-slate-900">
                               <FileCheck size={48} className="text-blue-400 mx-auto mb-3" />
                               <h5 className="font-bold text-slate-200 mb-1">{currentFile.name}</h5>
-                              <p className="text-xs text-slate-400 mb-4">미리보기를 지원하지 않는 파일 형식입니다.</p>
-                              <a
-                                href={currentFile.dataUrl}
-                                download={currentFile.name}
-                                className="inline-flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-xl font-bold text-xs hover:bg-blue-700"
-                              >
-                                <Download size={14} />
-                                <span>파일 다운로드</span>
-                              </a>
+                              <p className="text-xs text-slate-400">미리보기를 지원하지 않는 파일 형식입니다.</p>
                             </div>
                           )}
                         </div>
@@ -1357,13 +1275,12 @@ export const InfoView: React.FC<InfoViewProps> = ({
                 </button>
               </div>
 
-              <UploadModalContent
+              <UploadForm
                 projects={infoProjects.filter((p) => p.status !== 'completed')}
-                selectedProjectId={uploadTargetProjectId}
-                onSelectProject={setUploadTargetProjectId}
+                defaultProjectId={uploadTargetProjectId}
+                isUploading={isUploading}
                 onUpload={handleUploadFiles}
                 onCancel={closeUploadModal}
-                isUploading={isUploading}
               />
             </motion.div>
           </div>
@@ -1374,598 +1291,85 @@ export const InfoView: React.FC<InfoViewProps> = ({
 };
 
 // ============================================================================
-// Sub Component: PDF Viewer Wrapper (Instant IndexedDB and Server URL Resolution)
+// Sub Component: PDF Viewer Wrapper (Resolves IndexedDB / Binary Data & Fast Load)
 // ============================================================================
 const PdfViewerWrapper: React.FC<{ file: InfoFile; initialSearchQuery?: string }> = ({ file, initialSearchQuery }) => {
-  const [pdfUrl, setPdfUrl] = useState<string>(file.dataUrl);
+  const [resolvedUrl, setResolvedUrl] = useState<string>(file.dataUrl || '');
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
-    if (file.id) {
-      getLocalFileBlob(file.id).then((cached) => {
-        if (isMounted && cached && cached.dataUrl) {
-          setPdfUrl(cached.dataUrl);
+    setIsLoading(true);
+    setLoadError(null);
+
+    const resolvePdfUrl = async () => {
+      try {
+        if (file.id) {
+          const cached = await getLocalFileBlob(file.id);
+          if (cached?.dataUrl && isMounted) {
+            setResolvedUrl(cached.dataUrl);
+            setIsLoading(false);
+            return;
+          } else if (cached?.blob && isMounted) {
+            const url = URL.createObjectURL(cached.blob);
+            setResolvedUrl(url);
+            setIsLoading(false);
+            return;
+          }
         }
-      });
-    }
+
+        if (file.dataUrl && isMounted) {
+          setResolvedUrl(file.dataUrl);
+          setIsLoading(false);
+          return;
+        }
+
+        if (isMounted) {
+          setLoadError('PDF 파일 경로를 찾을 수 없습니다.');
+          setIsLoading(false);
+        }
+      } catch (err: any) {
+        console.warn('PDF URL resolve notice:', err);
+        if (isMounted) {
+          setResolvedUrl(file.dataUrl || '');
+          setIsLoading(false);
+        }
+      }
+    };
+
+    resolvePdfUrl();
+
     return () => {
       isMounted = false;
     };
   }, [file.id, file.dataUrl]);
 
+  if (isLoading) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center p-8 bg-slate-950 text-slate-300">
+        <div className="w-10 h-10 border-3 border-rose-500 border-t-transparent rounded-full animate-spin mb-3" />
+        <p className="text-sm font-bold">PDF 도면 불러오는 중...</p>
+      </div>
+    );
+  }
+
+  if (loadError || !resolvedUrl) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center p-8 bg-slate-900 text-center">
+        <FileText size={48} className="text-rose-400 mb-3" />
+        <h4 className="text-base font-bold text-white mb-1">도면 파일을 열 수 없습니다</h4>
+        <p className="text-xs text-slate-400 mb-4">{loadError || '파일 데이터가 유실되었거나 접근할 수 없습니다.'}</p>
+      </div>
+    );
+  }
+
   return (
     <UniversalPdfViewer
-      url={pdfUrl}
+      url={resolvedUrl}
       fileName={file.name}
       initialSearchQuery={initialSearchQuery}
     />
-  );
-};
-
-// ============================================================================
-// Sub Component: Project Form (Create / Edit)
-// ============================================================================
-const ProjectForm: React.FC<{
-  initialData: InfoProject | null;
-  onSave: (data: {
-    model: string;
-    deviceType: string;
-    quantity: string;
-    shipmentDate: string;
-    memo?: string;
-  }) => void;
-  onCancel: () => void;
-}> = ({ initialData, onSave, onCancel }) => {
-  const [model, setModel] = useState(initialData?.model || '');
-  const [deviceType, setDeviceType] = useState(initialData?.deviceType || '');
-  const [quantity, setQuantity] = useState(String(initialData?.quantity || ''));
-  const [shipmentDate, setShipmentDate] = useState(initialData?.shipmentDate || '');
-  const [memo, setMemo] = useState(initialData?.memo || '');
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!model.trim()) {
-      alert('모델명을 입력해주세요.');
-      return;
-    }
-    onSave({
-      model,
-      deviceType,
-      quantity,
-      shipmentDate,
-      memo
-    });
-  };
-
-  return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <div>
-        <label className="block text-xs font-bold text-slate-700 mb-1">모델명 (Model) *</label>
-        <input
-          type="text"
-          required
-          placeholder="예: EF62, A-2026, MAIN-FRAME"
-          value={model}
-          onChange={(e) => setModel(e.target.value)}
-          className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none transition-all"
-        />
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="block text-xs font-bold text-slate-700 mb-1">기종 / 구분 (Type)</label>
-          <input
-            type="text"
-            placeholder="예: CPH-332R, 커버형"
-            value={deviceType}
-            onChange={(e) => setDeviceType(e.target.value)}
-            className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none transition-all"
-          />
-        </div>
-        <div>
-          <label className="block text-xs font-bold text-slate-700 mb-1">생산 수량 (Qty)</label>
-          <input
-            type="text"
-            placeholder="예: 5000, 10,000개"
-            value={quantity}
-            onChange={(e) => setQuantity(e.target.value)}
-            className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none transition-all"
-          />
-        </div>
-      </div>
-
-      <div>
-        <label className="block text-xs font-bold text-slate-700 mb-1">선적 날짜 (Shipping Date)</label>
-        <input
-          type="date"
-          value={shipmentDate}
-          onChange={(e) => setShipmentDate(e.target.value)}
-          className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none transition-all"
-        />
-      </div>
-
-      <div>
-        <label className="block text-xs font-bold text-slate-700 mb-1">비고 / 메모 (선택)</label>
-        <textarea
-          rows={2}
-          placeholder="특이사항이나 전달 메시지를 입력하세요"
-          value={memo}
-          onChange={(e) => setMemo(e.target.value)}
-          className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium focus:bg-white focus:ring-2 focus:ring-blue-500 outline-none transition-all resize-none"
-        />
-      </div>
-
-      <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="px-4 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100 rounded-xl transition-all"
-        >
-          취소
-        </button>
-        <button
-          type="submit"
-          className="px-5 py-2 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl shadow-md shadow-blue-200 transition-all cursor-pointer"
-        >
-          {initialData ? '수정 완료' : '프로젝트 등록'}
-        </button>
-      </div>
-    </form>
-  );
-};
-
-// ============================================================================
-// Sub Component: Upload Modal Content
-// ============================================================================
-const UploadModalContent: React.FC<{
-  projects: InfoProject[];
-  selectedProjectId: string;
-  onSelectProject: (id: string) => void;
-  onUpload: (targetId: string, files: File[]) => void;
-  onCancel: () => void;
-  isUploading?: boolean;
-}> = ({ projects, selectedProjectId, onSelectProject, onUpload, onCancel, isUploading }) => {
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [isDragging, setIsDragging] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      setSelectedFiles(Array.from(e.target.files));
-    }
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      setSelectedFiles(Array.from(e.dataTransfer.files));
-    }
-  };
-
-  const handleSubmit = () => {
-    if (!selectedProjectId) {
-      alert('업로드할 대상 프로젝트를 선택해주세요.');
-      return;
-    }
-    if (selectedFiles.length === 0) {
-      alert('업로드할 파일을 최소 1개 이상 선택해주세요.');
-      return;
-    }
-    onUpload(selectedProjectId, selectedFiles);
-  };
-
-  return (
-    <div className="space-y-4">
-      <div>
-        <label className="block text-xs font-bold text-slate-700 mb-1.5">대상 프로젝트 선택 *</label>
-        {projects.length === 0 ? (
-          <p className="text-xs text-rose-500 font-bold p-3 bg-rose-50 rounded-xl">
-            진행 중인 프로젝트가 없습니다. 먼저 상단의 [프로젝트] 버튼으로 프로젝트를 등록하세요.
-          </p>
-        ) : (
-          <select
-            value={selectedProjectId}
-            onChange={(e) => onSelectProject(e.target.value)}
-            disabled={isUploading}
-            className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none transition-all cursor-pointer disabled:opacity-60"
-          >
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                [{p.model}] {p.deviceType ? `- ${p.deviceType}` : ''} ({p.shipmentDate || '선적일미정'})
-              </option>
-            ))}
-          </select>
-        )}
-      </div>
-
-      <div>
-        <label className="block text-xs font-bold text-slate-700 mb-1.5">
-          파일 첨부 (엑셀, PDF 도면, 사진 다중 선택 가능)
-        </label>
-        <div
-          onDragOver={(e) => {
-            e.preventDefault();
-            if (!isUploading) setIsDragging(true);
-          }}
-          onDragLeave={() => setIsDragging(false)}
-          onDrop={handleDrop}
-          onClick={() => {
-            if (!isUploading) fileInputRef.current?.click();
-          }}
-          className={cn(
-            'border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all flex flex-col items-center justify-center',
-            isDragging
-              ? 'border-amber-500 bg-amber-50'
-              : 'border-slate-200 bg-slate-50 hover:bg-slate-100/80 hover:border-slate-300',
-            isUploading && 'pointer-events-none opacity-60'
-          )}
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept=".pdf,.xlsx,.xls,.csv,.jpg,.jpeg,.png,.webp,.bmp"
-            onChange={handleFileChange}
-            disabled={isUploading}
-            className="hidden"
-          />
-          <div className="w-12 h-12 bg-white rounded-2xl shadow-sm flex items-center justify-center text-amber-500 mb-2">
-            <Upload size={24} />
-          </div>
-          <p className="text-sm font-bold text-slate-700">여기를 클릭하거나 파일을 끌어다 놓으세요</p>
-          <p className="text-xs text-slate-400 mt-1">
-            지원 형식: <span className="text-emerald-600 font-bold">XLSX, XLS</span> (PO/PACKING 등 자동 문서 변환),{' '}
-            <span className="text-rose-500 font-bold">PDF</span> (도면),{' '}
-            <span className="text-amber-500 font-bold">JPG, PNG</span>
-          </p>
-        </div>
-      </div>
-
-      {selectedFiles.length > 0 && (
-        <div className="max-h-36 overflow-y-auto space-y-1.5 bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-xs">
-          <p className="font-bold text-slate-600 mb-1">선택된 파일 ({selectedFiles.length}개):</p>
-          {selectedFiles.map((file, idx) => (
-            <div key={idx} className="flex items-center justify-between bg-white px-2.5 py-1.5 rounded-lg border border-slate-100">
-              <span className="font-medium text-slate-700 truncate max-w-[300px]">{file.name}</span>
-              <span className="text-[11px] text-slate-400 font-mono">{(file.size / 1024).toFixed(1)} KB</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
-        <button
-          type="button"
-          onClick={onCancel}
-          disabled={isUploading}
-          className="px-4 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100 rounded-xl transition-all disabled:opacity-50"
-        >
-          취소
-        </button>
-        <button
-          type="button"
-          onClick={handleSubmit}
-          disabled={projects.length === 0 || selectedFiles.length === 0 || isUploading}
-          className="flex items-center gap-2 px-5 py-2 text-sm font-bold text-white bg-amber-500 hover:bg-amber-600 disabled:opacity-40 rounded-xl shadow-md shadow-amber-200 transition-all cursor-pointer"
-        >
-          {isUploading ? (
-            <>
-              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              <span>업로드 처리 중...</span>
-            </>
-          ) : (
-            <span>업로드 시작</span>
-          )}
-        </button>
-      </div>
-    </div>
-  );
-};
-
-// ============================================================================
-// Sub Component: Excel Viewer (Native App Launch Priority + In-App Preview)
-// Opens directly in native Excel app on phone/PC, plus in-app clean sheet viewer!
-// ============================================================================
-const ExcelNativeAndDocumentViewer: React.FC<{ file: InfoFile; onOpenNative: () => void }> = ({ file, onOpenNative }) => {
-  const [activeSheetIdx, setActiveSheetIdx] = useState(0);
-  const [viewMode, setViewMode] = useState<'image' | 'table'>('image');
-  const [zoom, setZoom] = useState(1);
-  const [rotation, setRotation] = useState(0);
-  const [position, setPosition] = useState({ x: 0, y: 0 });
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  // Touch gesture state for pinch-to-zoom & double tap
-  const touchStartDistRef = useRef<number | null>(null);
-  const touchStartZoomRef = useRef<number>(1);
-  const lastTapRef = useRef<number>(0);
-
-  // Sheets data & converted images
-  const sheets = file.parsedSheets || [];
-  const sheetImages = file.sheetImages || [];
-
-  // Fallback: If sheetImages is empty, generate on the fly
-  const [generatedImages, setGeneratedImages] = useState<{ [name: string]: string }>({});
-
-  useEffect(() => {
-    sheets.forEach(async (sheet) => {
-      const alreadyHas = sheetImages.find((si) => si.name === sheet.name);
-      if (!alreadyHas && !generatedImages[sheet.name]) {
-        try {
-          const res = await convertSheetToDocumentImage(sheet.name, sheet.data, file.name);
-          if (res.dataUrl) {
-            setGeneratedImages((prev) => ({ ...prev, [sheet.name]: res.dataUrl }));
-          }
-        } catch (e) {
-          console.warn('On-the-fly conversion error:', e);
-        }
-      }
-    });
-  }, [sheets, sheetImages, file.name]);
-
-  const currentSheet = sheets[activeSheetIdx] || { name: 'Sheet1', data: [] };
-  const currentSheetImage =
-    sheetImages.find((si) => si.name === currentSheet.name)?.dataUrl ||
-    generatedImages[currentSheet.name] ||
-    sheetImages[activeSheetIdx]?.dataUrl;
-
-  const handleMouseDown = (e: React.MouseEvent) => {
-    setIsDragging(true);
-    setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y });
-  };
-
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (!isDragging) return;
-    setPosition({
-      x: e.clientX - dragStart.x,
-      y: e.clientY - dragStart.y
-    });
-  };
-
-  const handleMouseUp = () => setIsDragging(false);
-
-  // Touch handlers for mobile
-  const handleTouchStart = (e: React.TouchEvent) => {
-    if (e.touches.length === 2) {
-      const dist = Math.hypot(
-        e.touches[0].clientX - e.touches[1].clientX,
-        e.touches[0].clientY - e.touches[1].clientY
-      );
-      touchStartDistRef.current = dist;
-      touchStartZoomRef.current = zoom;
-    } else if (e.touches.length === 1) {
-      const now = Date.now();
-      if (now - lastTapRef.current < 300) {
-        setZoom((prev) => (prev > 1.2 ? 1 : 2.2));
-        setPosition({ x: 0, y: 0 });
-      }
-      lastTapRef.current = now;
-      setIsDragging(true);
-      setDragStart({ x: e.touches[0].clientX - position.x, y: e.touches[0].clientY - position.y });
-    }
-  };
-
-  const handleTouchMove = (e: React.TouchEvent) => {
-    if (e.touches.length === 2 && touchStartDistRef.current !== null) {
-      const dist = Math.hypot(
-        e.touches[0].clientX - e.touches[1].clientX,
-        e.touches[0].clientY - e.touches[1].clientY
-      );
-      const ratio = dist / touchStartDistRef.current;
-      const newZoom = Math.min(Math.max(0.5, touchStartZoomRef.current * ratio), 4.5);
-      setZoom(Number(newZoom.toFixed(2)));
-    } else if (e.touches.length === 1 && isDragging) {
-      setPosition({
-        x: e.touches[0].clientX - dragStart.x,
-        y: e.touches[0].clientY - dragStart.y
-      });
-    }
-  };
-
-  const handleTouchEnd = () => {
-    touchStartDistRef.current = null;
-    setIsDragging(false);
-  };
-
-  const resetView = () => {
-    setZoom(1);
-    setRotation(0);
-    setPosition({ x: 0, y: 0 });
-  };
-
-  return (
-    <div className="flex-1 flex flex-col bg-slate-950 overflow-hidden select-none">
-      {/* 1. Native Excel App Quick Launcher Hero Banner */}
-      <div className="bg-emerald-950/60 border-b border-emerald-800/60 px-3 md:px-5 py-2.5 flex items-center justify-between gap-3 shrink-0 flex-wrap">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <div className="w-9 h-9 bg-emerald-600 rounded-xl flex items-center justify-center text-white shrink-0 shadow-sm">
-            <FileSpreadsheet size={20} />
-          </div>
-          <div className="truncate">
-            <h4 className="text-xs md:text-sm font-black text-white flex items-center gap-1.5 truncate">
-              <span>{file.name}</span>
-              <span className="text-emerald-400 font-normal text-[11px] hidden sm:inline">(기기 기본 엑셀 앱 연동)</span>
-            </h4>
-            <p className="text-[11px] text-emerald-200/80">
-              휴대폰/PC에 설치된 엑셀(한컴/Excel/구글시트)로 열람 후 닫으면 앱으로 바로 복귀됩니다.
-            </p>
-          </div>
-        </div>
-
-        <button
-          onClick={onOpenNative}
-          className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-black text-xs md:text-sm rounded-xl shadow-lg shadow-emerald-900/40 transition-all cursor-pointer shrink-0 ml-auto"
-        >
-          <FileSpreadsheet size={16} className="text-slate-950" />
-          <span>기기 엑셀 앱으로 열기 (원클릭)</span>
-        </button>
-      </div>
-
-      {/* 2. Sheet Navigation Tabs Bar (PO, PACKING, etc.) */}
-      <div className="bg-slate-900 border-b border-slate-800 px-2.5 md:px-4 py-1.5 flex items-center justify-between gap-2 overflow-x-auto shrink-0 no-scrollbar">
-        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-          <span className="text-[11px] font-black text-emerald-400 uppercase tracking-wider shrink-0 mr-1 flex items-center gap-1">
-            시트 선택:
-          </span>
-          {sheets.length === 0 ? (
-            <span className="text-xs text-slate-400">시트 정보 없음</span>
-          ) : (
-            sheets.map((sheet, idx) => {
-              const isActive = idx === activeSheetIdx;
-              return (
-                <button
-                  key={sheet.name}
-                  onClick={() => {
-                    setActiveSheetIdx(idx);
-                    resetView();
-                  }}
-                  className={cn(
-                    'px-3 py-1 rounded-lg text-xs font-black transition-all shrink-0 border cursor-pointer flex items-center gap-1.5',
-                    isActive
-                      ? 'bg-emerald-600 text-white border-emerald-500 shadow-sm'
-                      : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200 hover:bg-slate-700'
-                  )}
-                >
-                  <span>{sheet.name.toUpperCase()}</span>
-                  <span className="text-[10px] opacity-75">({sheet.data.length}행)</span>
-                </button>
-              );
-            })
-          )}
-        </div>
-
-        {/* View Mode Switcher (Clean Document Image vs Raw Table Grid) */}
-        <div className="flex items-center gap-1.5 shrink-0">
-          <div className="bg-slate-950 p-0.5 rounded-lg border border-slate-800 flex items-center">
-            <button
-              onClick={() => setViewMode('image')}
-              className={cn(
-                'px-2.5 py-0.5 rounded-md text-[11px] font-black flex items-center gap-1 transition-all cursor-pointer',
-                viewMode === 'image' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-slate-200'
-              )}
-              title="깔끔한 인쇄 문서 이미지로 보기"
-            >
-              <Eye size={12} />
-              <span>문서 이미지</span>
-            </button>
-            <button
-              onClick={() => setViewMode('table')}
-              className={cn(
-                'px-2.5 py-0.5 rounded-md text-[11px] font-black flex items-center gap-1 transition-all cursor-pointer',
-                viewMode === 'table' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-slate-200'
-              )}
-              title="데이터 표 격자로 보기"
-            >
-              <TableIcon size={12} />
-              <span>표 격자</span>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* 3. Viewer Toolbar (Zoom, Rotate, Pan Info) */}
-      <div className="bg-slate-900/80 px-2.5 md:px-4 py-1 border-b border-slate-800 flex items-center justify-between text-xs text-slate-300 shrink-0">
-        <div className="flex items-center gap-1.5 truncate">
-          <span className="text-emerald-400 font-bold truncate">[ {currentSheet.name} ]</span>
-          <span className="text-slate-500 text-[11px] hidden sm:inline">| 터치 핀치/드래그로 화면 이동</span>
-        </div>
-
-        <div className="flex items-center gap-1 shrink-0">
-          <button
-            onClick={() => setZoom((z) => Math.max(0.4, z - 0.2))}
-            className="p-1 hover:bg-slate-800 rounded text-slate-300 hover:text-white cursor-pointer"
-            title="축소"
-          >
-            <ZoomOut size={14} />
-          </button>
-          <span className="font-mono text-[11px] w-10 text-center text-slate-400 font-bold">
-            {Math.round(zoom * 100)}%
-          </span>
-          <button
-            onClick={() => setZoom((z) => Math.min(4, z + 0.2))}
-            className="p-1 hover:bg-slate-800 rounded text-slate-300 hover:text-white cursor-pointer"
-            title="확대"
-          >
-            <ZoomIn size={14} />
-          </button>
-          <button
-            onClick={() => setRotation((r) => (r + 90) % 360)}
-            className="p-1 hover:bg-slate-800 rounded text-slate-300 hover:text-white ml-0.5 cursor-pointer"
-            title="90도 회전"
-          >
-            <RotateCw size={14} />
-          </button>
-          <button
-            onClick={resetView}
-            className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 rounded text-[11px] font-bold text-slate-300 ml-0.5 cursor-pointer"
-            title="화면 맞춤"
-          >
-            맞춤
-          </button>
-        </div>
-      </div>
-
-      {/* 4. Main Viewer Canvas Area */}
-      <div
-        ref={containerRef}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
-        className={cn(
-          'flex-1 overflow-auto bg-slate-950 relative flex items-center justify-center p-1 md:p-4',
-          isDragging ? 'cursor-grabbing select-none' : 'cursor-grab'
-        )}
-        style={{ touchAction: 'pan-x pan-y pinch-zoom' }}
-      >
-        {viewMode === 'image' && currentSheetImage ? (
-          <div
-            style={{
-              transform: `translate(${position.x}px, ${position.y}px) scale(${zoom}) rotate(${rotation}deg)`,
-              transformOrigin: 'center center',
-              transition: isDragging ? 'none' : 'transform 0.08s ease-out'
-            }}
-            className="m-auto min-w-fit min-h-fit shadow-2xl rounded-lg overflow-hidden bg-white max-w-full"
-          >
-            <img
-              src={currentSheetImage}
-              alt={currentSheet.name}
-              className="max-w-none block pointer-events-none"
-              style={{ maxHeight: '88vh', objectFit: 'contain' }}
-            />
-          </div>
-        ) : (
-          /* Table Grid View Fallback */
-          <div
-            style={{
-              transform: `translate(${position.x}px, ${position.y}px) scale(${zoom})`,
-              transformOrigin: 'top center',
-              transition: isDragging ? 'none' : 'transform 0.08s ease-out'
-            }}
-            className="m-auto min-w-fit bg-white text-slate-900 rounded-xl shadow-2xl p-4 overflow-hidden border border-slate-300"
-          >
-            <table className="border-collapse text-xs w-full">
-              <tbody>
-                {currentSheet.data.map((row, rIdx) => (
-                  <tr key={rIdx} className={rIdx === 0 ? 'bg-slate-800 text-white font-bold' : rIdx % 2 === 1 ? 'bg-white' : 'bg-slate-50'}>
-                    {row.map((cell: any, cIdx: number) => (
-                      <td key={cIdx} className="border border-slate-300 px-3 py-1.5 whitespace-nowrap">
-                        {String(cell || '')}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
   );
 };
 
@@ -1986,7 +1390,6 @@ const ImageViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
   const lastTapRef = useRef<number>(0);
 
   useEffect(() => {
-    // If dataUrl is a local ID or needs IndexedDB fetch
     if (file.id) {
       getLocalFileBlob(file.id).then((cached) => {
         if (cached && cached.dataUrl) {
@@ -2023,7 +1426,7 @@ const ImageViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
     } else if (e.touches.length === 1) {
       const now = Date.now();
       if (now - lastTapRef.current < 300) {
-        setZoom((prev) => (prev > 1.2 ? 1 : 2.2));
+        setZoom((prev) => (prev > 1.2 ? 1 : 2.5));
         setPosition({ x: 0, y: 0 });
       }
       lastTapRef.current = now;
@@ -2039,7 +1442,7 @@ const ImageViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
         e.touches[0].clientY - e.touches[1].clientY
       );
       const ratio = dist / touchStartDistRef.current;
-      const newZoom = Math.min(Math.max(0.5, touchStartZoomRef.current * ratio), 4.5);
+      const newZoom = Math.min(Math.max(0.5, touchStartZoomRef.current * ratio), 5);
       setZoom(Number(newZoom.toFixed(2)));
     } else if (e.touches.length === 1 && isDragging) {
       setPosition({
@@ -2062,40 +1465,41 @@ const ImageViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
 
   return (
     <div className="flex-1 flex flex-col bg-slate-950 overflow-hidden select-none">
-      <div className="bg-slate-900 px-2.5 md:px-4 py-1.5 border-b border-slate-800 flex items-center justify-between text-xs text-slate-300 shrink-0">
-        <div className="flex items-center gap-1.5 truncate">
+      {/* Control Bar */}
+      <div className="bg-slate-900/80 px-4 py-1.5 border-b border-slate-800 flex items-center justify-between text-xs text-slate-300 shrink-0">
+        <div className="flex items-center gap-2 truncate">
           <span className="font-bold text-amber-400 truncate">{file.name}</span>
-          <span className="text-slate-500 text-[11px] hidden sm:inline">| 터치 드래그로 이동</span>
+          <span className="text-slate-500 text-[11px] hidden sm:inline">| 터치 핀치/드래그로 화면 이동</span>
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
           <button
-            onClick={() => setZoom((z) => Math.max(0.4, z - 0.2))}
+            onClick={() => setZoom((z) => Math.max(0.4, z - 0.25))}
             className="p-1 hover:bg-slate-800 rounded text-slate-300 hover:text-white cursor-pointer"
             title="축소"
           >
-            <ZoomOut size={14} />
+            <ZoomOut size={15} />
           </button>
-          <span className="font-mono text-[11px] w-10 text-center text-slate-400 font-bold">
+          <span className="font-mono text-xs w-11 text-center text-slate-300 font-bold">
             {Math.round(zoom * 100)}%
           </span>
           <button
-            onClick={() => setZoom((z) => Math.min(4, z + 0.2))}
+            onClick={() => setZoom((z) => Math.min(5, z + 0.25))}
             className="p-1 hover:bg-slate-800 rounded text-slate-300 hover:text-white cursor-pointer"
             title="확대"
           >
-            <ZoomIn size={14} />
+            <ZoomIn size={15} />
           </button>
           <button
             onClick={() => setRotation((r) => (r + 90) % 360)}
-            className="p-1 hover:bg-slate-800 rounded text-slate-300 hover:text-white ml-0.5 cursor-pointer"
+            className="p-1 hover:bg-slate-800 rounded text-slate-300 hover:text-white ml-1 cursor-pointer"
             title="90도 회전"
           >
-            <RotateCw size={14} />
+            <RotateCw size={15} />
           </button>
           <button
             onClick={resetView}
-            className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 rounded text-[11px] font-bold text-slate-300 ml-0.5 cursor-pointer"
+            className="px-2.5 py-0.5 bg-slate-800 hover:bg-slate-700 rounded text-xs font-bold text-slate-300 ml-1 cursor-pointer"
             title="화면 맞춤"
           >
             맞춤
@@ -2103,6 +1507,7 @@ const ImageViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
         </div>
       </div>
 
+      {/* Main Image Canvas Area */}
       <div
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
@@ -2112,7 +1517,7 @@ const ImageViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
         className={cn(
-          'flex-1 overflow-auto bg-slate-950 relative flex items-center justify-center p-1 md:p-4',
+          'flex-1 overflow-auto bg-slate-950 relative flex items-center justify-center p-2 md:p-6',
           isDragging ? 'cursor-grabbing select-none' : 'cursor-grab'
         )}
         style={{ touchAction: 'pan-x pan-y pinch-zoom' }}
@@ -2123,16 +1528,284 @@ const ImageViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
             transformOrigin: 'center center',
             transition: isDragging ? 'none' : 'transform 0.08s ease-out'
           }}
-          className="m-auto min-w-fit min-h-fit shadow-2xl rounded-lg overflow-hidden bg-slate-900 max-w-full"
+          className="m-auto min-w-fit min-h-fit shadow-2xl rounded-lg overflow-hidden bg-black/40"
         >
           <img
-            src={localUrl || file.dataUrl}
+            src={localUrl}
             alt={file.name}
-            className="max-w-none block pointer-events-none"
-            style={{ maxHeight: '88vh', objectFit: 'contain' }}
+            className="max-w-none block pointer-events-none rounded-lg"
+            style={{ maxHeight: '82vh', objectFit: 'contain' }}
           />
         </div>
       </div>
     </div>
+  );
+};
+
+// ============================================================================
+// Sub Component: Project Create / Edit Form
+// ============================================================================
+interface ProjectFormProps {
+  initialData: InfoProject | null;
+  onSave: (data: {
+    model: string;
+    deviceType: string;
+    quantity: string;
+    shipmentDate: string;
+    memo?: string;
+  }) => void;
+  onCancel: () => void;
+}
+
+const ProjectForm: React.FC<ProjectFormProps> = ({ initialData, onSave, onCancel }) => {
+  const [model, setModel] = useState(initialData?.model || '');
+  const [deviceType, setDeviceType] = useState(initialData?.deviceType || '');
+  const [quantity, setQuantity] = useState(
+    initialData ? String(initialData.quantity || '') : ''
+  );
+  const [shipmentDate, setShipmentDate] = useState(initialData?.shipmentDate || '');
+  const [memo, setMemo] = useState(initialData?.memo || '');
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!model.trim()) {
+      alert('모델명을 입력해주세요.');
+      return;
+    }
+    if (!deviceType.trim()) {
+      alert('기종을 입력해주세요.');
+      return;
+    }
+
+    onSave({
+      model: model.trim(),
+      deviceType: deviceType.trim(),
+      quantity: quantity.trim(),
+      shipmentDate,
+      memo: memo.trim()
+    });
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div>
+        <label className="block text-xs font-bold text-slate-700 mb-1">
+          모델명 <span className="text-rose-500">*</span>
+        </label>
+        <input
+          type="text"
+          placeholder="예: EF62, CPH-300"
+          value={model}
+          onChange={(e) => setModel(e.target.value)}
+          required
+          className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </div>
+
+      <div>
+        <label className="block text-xs font-bold text-slate-700 mb-1">
+          기종 <span className="text-rose-500">*</span>
+        </label>
+        <input
+          type="text"
+          placeholder="예: CPH-332R, HEAD, BASE"
+          value={deviceType}
+          onChange={(e) => setDeviceType(e.target.value)}
+          required
+          className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs font-bold text-slate-700 mb-1">생산수량</label>
+          <input
+            type="text"
+            placeholder="예: 5000"
+            value={quantity}
+            onChange={(e) => setQuantity(e.target.value)}
+            className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+
+        <div>
+          <label className="block text-xs font-bold text-slate-700 mb-1">선적날짜</label>
+          <input
+            type="date"
+            value={shipmentDate}
+            onChange={(e) => setShipmentDate(e.target.value)}
+            className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-xs font-bold text-slate-700 mb-1">메모 (선택사항)</label>
+        <textarea
+          placeholder="특이사항, 발주처, 작업 주의사항 등"
+          value={memo}
+          onChange={(e) => setMemo(e.target.value)}
+          rows={2}
+          className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+        />
+      </div>
+
+      <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="px-4 py-2 text-slate-600 hover:bg-slate-100 font-bold text-xs rounded-xl cursor-pointer"
+        >
+          취소
+        </button>
+        <button
+          type="submit"
+          className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-md shadow-blue-200 transition-all cursor-pointer"
+        >
+          저장하기
+        </button>
+      </div>
+    </form>
+  );
+};
+
+// ============================================================================
+// Sub Component: Multi-File Upload Form
+// ============================================================================
+interface UploadFormProps {
+  projects: InfoProject[];
+  defaultProjectId: string;
+  isUploading: boolean;
+  onUpload: (targetProjectId: string, files: File[]) => void;
+  onCancel: () => void;
+}
+
+const UploadForm: React.FC<UploadFormProps> = ({
+  projects,
+  defaultProjectId,
+  isUploading,
+  onUpload,
+  onCancel
+}) => {
+  const [selectedProjectId, setSelectedProjectId] = useState(defaultProjectId || (projects[0]?.id || ''));
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      setSelectedFiles(Array.from(e.target.files));
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (e.dataTransfer.files) {
+      setSelectedFiles(Array.from(e.dataTransfer.files));
+    }
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedProjectId) {
+      alert('대상 프로젝트를 선택해주세요.');
+      return;
+    }
+    if (selectedFiles.length === 0) {
+      alert('업로드할 파일을 최소 1개 이상 선택해주세요.');
+      return;
+    }
+
+    onUpload(selectedProjectId, selectedFiles);
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div>
+        <label className="block text-xs font-bold text-slate-700 mb-1">
+          등록할 대상 프로젝트 선택 <span className="text-rose-500">*</span>
+        </label>
+        <select
+          value={selectedProjectId}
+          onChange={(e) => setSelectedProjectId(e.target.value)}
+          required
+          className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500"
+        >
+          {projects.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.model} ({p.deviceType}) - 선적: {p.shipmentDate || '미정'}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Drag and Drop Zone */}
+      <div
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={handleDrop}
+        onClick={() => fileInputRef.current?.click()}
+        className="border-2 border-dashed border-slate-200 hover:border-amber-400 bg-slate-50/60 hover:bg-amber-50/40 rounded-2xl p-6 text-center cursor-pointer transition-all"
+      >
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept=".pdf,.xlsx,.xls,.csv,.jpg,.jpeg,.png,.webp,.gif"
+          onChange={handleFileChange}
+          className="hidden"
+        />
+        <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center mx-auto mb-2">
+          <Upload size={24} />
+        </div>
+        <p className="text-xs md:text-sm font-bold text-slate-700 mb-1">
+          파일을 이곳으로 드래그하거나 클릭하여 선택하세요
+        </p>
+        <p className="text-[11px] text-slate-400">
+          지원 파일: 작업지시서(PDF), 엑셀(XLSX/XLS), 도면 사진(JPG/PNG) 등
+        </p>
+      </div>
+
+      {/* Selected Files List */}
+      {selectedFiles.length > 0 && (
+        <div className="max-h-36 overflow-y-auto space-y-1.5 bg-slate-50 p-2.5 rounded-xl border border-slate-100 text-xs">
+          <div className="text-[11px] font-bold text-slate-500 mb-1">
+            선택된 파일 ({selectedFiles.length}개):
+          </div>
+          {selectedFiles.map((file, idx) => (
+            <div key={idx} className="flex items-center justify-between bg-white px-2.5 py-1.5 rounded-lg border border-slate-100">
+              <span className="font-bold text-slate-800 truncate max-w-[300px]">{file.name}</span>
+              <span className="text-[10px] text-slate-400 shrink-0">({(file.size / 1024).toFixed(1)} KB)</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={isUploading}
+          className="px-4 py-2 text-slate-600 hover:bg-slate-100 font-bold text-xs rounded-xl cursor-pointer"
+        >
+          취소
+        </button>
+        <button
+          type="submit"
+          disabled={isUploading || selectedFiles.length === 0}
+          className="px-5 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-md shadow-amber-200 transition-all cursor-pointer flex items-center gap-1.5"
+        >
+          {isUploading ? (
+            <>
+              <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              <span>업로드 및 등록 중...</span>
+            </>
+          ) : (
+            <>
+              <Upload size={14} />
+              <span>{selectedFiles.length > 0 ? `${selectedFiles.length}개 파일 업로드` : '파일 업로드'}</span>
+            </>
+          )}
+        </button>
+      </div>
+    </form>
   );
 };
