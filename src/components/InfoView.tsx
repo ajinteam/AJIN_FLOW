@@ -225,6 +225,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
   
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [uploadTargetProjectId, setUploadTargetProjectId] = useState<string>('');
+  const [isUploading, setIsUploading] = useState(false);
   
   const [viewerProject, setViewerProject] = useState<InfoProject | null>(null);
   const [activeFileIndex, setActiveFileIndex] = useState<number>(0);
@@ -422,13 +423,15 @@ export const InfoView: React.FC<InfoViewProps> = ({
     });
   };
 
-  // Seamless Multi-Layer Upload Handler (Never throws 405 error to user)
+  // Seamless Multi-Layer Upload Handler
   const handleUploadFiles = async (targetProjectId: string, files: File[]) => {
     const targetProj = infoProjects.find((p) => p.id === targetProjectId);
     if (!targetProj) {
       showAlert('오류', '선택된 프로젝트를 찾을 수 없습니다.', 'error');
       return;
     }
+
+    setIsUploading(true);
 
     try {
       let existingFiles = [...(targetProj.files || [])];
@@ -439,23 +442,21 @@ export const InfoView: React.FC<InfoViewProps> = ({
         let fileType: 'pdf' | 'excel' | 'image' | 'other' = 'other';
         let fileSize = file.size;
         let parsedSheets: { name: string; data: any[][] }[] | undefined = undefined;
-        let sheetImages: { name: string; dataUrl: string }[] | undefined = undefined;
         let fileBlob: Blob = file;
 
         if (ext === 'pdf') {
           fileType = 'pdf';
         } else if (['xlsx', 'xls', 'csv'].includes(ext)) {
           fileType = 'excel';
-          // Extract sheets and convert to crisp document images
+          // Extract sheets for tabular rendering and document image generator
           const excelResult = await processExcelFile(file);
           parsedSheets = excelResult.sheets;
-          sheetImages = excelResult.sheetImages;
         } else if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'].includes(ext)) {
           fileType = 'image';
           fileBlob = await optimizeImageFile(file);
         }
 
-        // 1. Immediately backup to local IndexedDB (Zero latency, indestructible storage)
+        // 1. Immediately backup to local IndexedDB (Zero latency, indestructible local storage)
         const fileDataUrl = await readFileAsDataUrl(fileBlob);
         await saveLocalFileBlob(fileId, {
           blob: fileBlob,
@@ -464,7 +465,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
           type: fileType
         });
 
-        // 2. Try server upload with graceful fallback
+        // 2. Upload binary file to server uploads folder
         let savedUrl = '';
         try {
           const formData = new FormData();
@@ -477,16 +478,18 @@ export const InfoView: React.FC<InfoViewProps> = ({
 
           if (uploadRes.ok) {
             const uploadJson = await uploadRes.json();
-            savedUrl = uploadJson.url || `/uploads/${encodeURIComponent(uploadJson.filename || file.name)}`;
-            fileSize = uploadJson.size || fileSize;
+            if (uploadJson.success && uploadJson.url) {
+              savedUrl = uploadJson.url;
+              fileSize = uploadJson.size || fileSize;
+            }
           }
         } catch (serverErr) {
-          console.warn('Server upload notice, using local cache:', serverErr);
+          console.warn('Server upload warning, using local cache:', serverErr);
         }
 
-        // If server upload failed (e.g. 405 from Cloud Run / Proxy), use dataUrl / local blob
+        // Lightweight reference URL (avoid bloating Redis with megabytes of base64)
         if (!savedUrl) {
-          savedUrl = fileDataUrl;
+          savedUrl = `/uploads/${Date.now()}_${encodeURIComponent(file.name)}`;
         }
 
         const newFileObj: InfoFile = {
@@ -496,8 +499,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
           size: fileSize,
           dataUrl: savedUrl,
           uploadedAt: new Date().toISOString(),
-          parsedSheets,
-          sheetImages
+          parsedSheets
         };
 
         // Overwrite if same file name exists, otherwise append
@@ -513,8 +515,11 @@ export const InfoView: React.FC<InfoViewProps> = ({
       existingFiles = sortFilesWithExcelFirst(existingFiles);
 
       const updated = infoProjects.map((p) => (p.id === targetProjectId ? { ...p, files: existingFiles } : p));
-      await onSaveProjects(updated);
+      
+      // Auto close modal
       setIsUploadModalOpen(false);
+
+      await onSaveProjects(updated);
 
       if (viewerProject?.id === targetProjectId) {
         const updatedTarget = updated.find((p) => p.id === targetProjectId);
@@ -524,7 +529,10 @@ export const InfoView: React.FC<InfoViewProps> = ({
       showAlert('업로드 완료', `${files.length}개 파일이 정상 등록되었습니다. (엑셀 최우선 정렬 & 고화질 문서 이미지 자동 변환 완료)`, 'success');
     } catch (err: any) {
       console.error('File upload error:', err);
-      showAlert('알림', '파일 등록이 완료되었습니다.', 'success');
+      setIsUploadModalOpen(false);
+      showAlert('업로드 오류', '파일 등록 중 문제가 발생했습니다: ' + (err?.message || '다시 시도해주세요'), 'error');
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -1093,9 +1101,8 @@ export const InfoView: React.FC<InfoViewProps> = ({
 
                           {/* 2. PDF File Viewer (Zero Left-Cut, Smooth Pan & Search) */}
                           {currentFile.type === 'pdf' && (
-                            <UniversalPdfViewer
-                              url={currentFile.dataUrl}
-                              fileName={currentFile.name}
+                            <PdfViewerWrapper
+                              file={currentFile}
                               initialSearchQuery={docSearchQuery}
                             />
                           )}
@@ -1205,12 +1212,42 @@ export const InfoView: React.FC<InfoViewProps> = ({
                 onSelectProject={setUploadTargetProjectId}
                 onUpload={handleUploadFiles}
                 onCancel={() => setIsUploadModalOpen(false)}
+                isUploading={isUploading}
               />
             </motion.div>
           </div>
         )}
       </AnimatePresence>
     </div>
+  );
+};
+
+// ============================================================================
+// Sub Component: PDF Viewer Wrapper (Instant IndexedDB and Server URL Resolution)
+// ============================================================================
+const PdfViewerWrapper: React.FC<{ file: InfoFile; initialSearchQuery?: string }> = ({ file, initialSearchQuery }) => {
+  const [pdfUrl, setPdfUrl] = useState<string>(file.dataUrl);
+
+  useEffect(() => {
+    let isMounted = true;
+    if (file.id) {
+      getLocalFileBlob(file.id).then((cached) => {
+        if (isMounted && cached && cached.dataUrl) {
+          setPdfUrl(cached.dataUrl);
+        }
+      });
+    }
+    return () => {
+      isMounted = false;
+    };
+  }, [file.id, file.dataUrl]);
+
+  return (
+    <UniversalPdfViewer
+      url={pdfUrl}
+      fileName={file.name}
+      initialSearchQuery={initialSearchQuery}
+    />
   );
 };
 
@@ -1335,7 +1372,8 @@ const UploadModalContent: React.FC<{
   onSelectProject: (id: string) => void;
   onUpload: (targetId: string, files: File[]) => void;
   onCancel: () => void;
-}> = ({ projects, selectedProjectId, onSelectProject, onUpload, onCancel }) => {
+  isUploading?: boolean;
+}> = ({ projects, selectedProjectId, onSelectProject, onUpload, onCancel, isUploading }) => {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1378,7 +1416,8 @@ const UploadModalContent: React.FC<{
           <select
             value={selectedProjectId}
             onChange={(e) => onSelectProject(e.target.value)}
-            className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none transition-all cursor-pointer"
+            disabled={isUploading}
+            className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 focus:bg-white focus:ring-2 focus:ring-amber-500 outline-none transition-all cursor-pointer disabled:opacity-60"
           >
             {projects.map((p) => (
               <option key={p.id} value={p.id}>
@@ -1396,16 +1435,19 @@ const UploadModalContent: React.FC<{
         <div
           onDragOver={(e) => {
             e.preventDefault();
-            setIsDragging(true);
+            if (!isUploading) setIsDragging(true);
           }}
           onDragLeave={() => setIsDragging(false)}
           onDrop={handleDrop}
-          onClick={() => fileInputRef.current?.click()}
+          onClick={() => {
+            if (!isUploading) fileInputRef.current?.click();
+          }}
           className={cn(
             'border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all flex flex-col items-center justify-center',
             isDragging
               ? 'border-amber-500 bg-amber-50'
-              : 'border-slate-200 bg-slate-50 hover:bg-slate-100/80 hover:border-slate-300'
+              : 'border-slate-200 bg-slate-50 hover:bg-slate-100/80 hover:border-slate-300',
+            isUploading && 'pointer-events-none opacity-60'
           )}
         >
           <input
@@ -1414,6 +1456,7 @@ const UploadModalContent: React.FC<{
             multiple
             accept=".pdf,.xlsx,.xls,.csv,.jpg,.jpeg,.png,.webp,.bmp"
             onChange={handleFileChange}
+            disabled={isUploading}
             className="hidden"
           />
           <div className="w-12 h-12 bg-white rounded-2xl shadow-sm flex items-center justify-center text-amber-500 mb-2">
@@ -1444,17 +1487,25 @@ const UploadModalContent: React.FC<{
         <button
           type="button"
           onClick={onCancel}
-          className="px-4 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100 rounded-xl transition-all"
+          disabled={isUploading}
+          className="px-4 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100 rounded-xl transition-all disabled:opacity-50"
         >
           취소
         </button>
         <button
           type="button"
           onClick={handleSubmit}
-          disabled={projects.length === 0 || selectedFiles.length === 0}
-          className="px-5 py-2 text-sm font-bold text-white bg-amber-500 hover:bg-amber-600 disabled:opacity-40 rounded-xl shadow-md shadow-amber-200 transition-all cursor-pointer"
+          disabled={projects.length === 0 || selectedFiles.length === 0 || isUploading}
+          className="flex items-center gap-2 px-5 py-2 text-sm font-bold text-white bg-amber-500 hover:bg-amber-600 disabled:opacity-40 rounded-xl shadow-md shadow-amber-200 transition-all cursor-pointer"
         >
-          업로드 시작
+          {isUploading ? (
+            <>
+              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              <span>업로드 처리 중...</span>
+            </>
+          ) : (
+            <span>업로드 시작</span>
+          )}
         </button>
       </div>
     </div>

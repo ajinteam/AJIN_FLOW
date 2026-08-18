@@ -118,7 +118,7 @@ async function startServer() {
       return res.status(200).json({ success: true, message: "No binary content uploaded" });
     } catch (error: any) {
       console.error("File upload error:", error);
-      res.status(200).json({ success: false, error: error.message || "Upload fallback" });
+      res.status(500).json({ success: false, error: error.message || "Upload failed" });
     }
   });
 
@@ -213,31 +213,52 @@ async function startServer() {
         processParts: data.processParts || []
       };
 
-      // Sanitize infoProjects: Convert any large base64 dataUrl into local file URLs to keep Redis ultra-lightweight (< 100KB)
+      // Sanitize infoProjects: Convert any large base64 dataUrl into local file URLs to keep Redis ultra-lightweight (< 50KB)
       let infoProjectsList = Array.isArray(data.infoProjects) ? data.infoProjects : [];
       infoProjectsList = await Promise.all(infoProjectsList.map(async (project: any) => {
         if (!project.files || !Array.isArray(project.files)) return project;
         
         const cleanFiles = await Promise.all(project.files.map(async (file: any) => {
-          if (file.dataUrl && typeof file.dataUrl === 'string' && file.dataUrl.startsWith('data:')) {
+          let sanitizedFile = { ...file };
+
+          // Convert dataUrl if base64
+          if (sanitizedFile.dataUrl && typeof sanitizedFile.dataUrl === 'string' && sanitizedFile.dataUrl.startsWith('data:')) {
             try {
-              const cleanBase64 = file.dataUrl.replace(/^data:.*?;base64,/, '');
+              const cleanBase64 = sanitizedFile.dataUrl.replace(/^data:.*?;base64,/, '');
               const buffer = Buffer.from(cleanBase64, 'base64');
               const timestamp = Date.now();
-              const sanitizedName = (file.name || 'file').replace(/[^a-zA-Z0-9._가-힣-]/g, '_');
+              const sanitizedName = (sanitizedFile.name || 'file').replace(/[^a-zA-Z0-9._가-힣-]/g, '_');
               const savedFileName = `${timestamp}_${sanitizedName}`;
               const filePath = path.join(uploadsDir, savedFileName);
               await fs.promises.writeFile(filePath, buffer);
-              return {
-                ...file,
-                dataUrl: `/uploads/${encodeURIComponent(savedFileName)}`
-              };
+              sanitizedFile.dataUrl = `/uploads/${encodeURIComponent(savedFileName)}`;
             } catch (convErr) {
               console.warn('Failed to convert base64 to file:', convErr);
-              return file;
             }
           }
-          return file;
+
+          // Strip any large base64 sheetImages or save them to disk
+          if (sanitizedFile.sheetImages && Array.isArray(sanitizedFile.sheetImages)) {
+            const cleanSheetImages = await Promise.all(sanitizedFile.sheetImages.map(async (si: any, sIdx: number) => {
+              if (si.dataUrl && typeof si.dataUrl === 'string' && si.dataUrl.startsWith('data:')) {
+                try {
+                  const cleanBase64 = si.dataUrl.replace(/^data:.*?;base64,/, '');
+                  const buffer = Buffer.from(cleanBase64, 'base64');
+                  const timestamp = Date.now();
+                  const savedImgName = `${timestamp}_sheet_${sIdx}_${(si.name || 'sheet').replace(/[^a-zA-Z0-9._가-힣-]/g, '_')}.jpg`;
+                  const imgPath = path.join(uploadsDir, savedImgName);
+                  await fs.promises.writeFile(imgPath, buffer);
+                  return { name: si.name, dataUrl: `/uploads/${encodeURIComponent(savedImgName)}` };
+                } catch {
+                  return { name: si.name, dataUrl: '' };
+                }
+              }
+              return si;
+            }));
+            sanitizedFile.sheetImages = cleanSheetImages;
+          }
+
+          return sanitizedFile;
         }));
 
         return {
@@ -253,9 +274,9 @@ async function startServer() {
       ]);
 
       res.json({ success: true });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Redis save error:", error);
-      res.status(500).json({ error: "Failed to save data to Redis" });
+      res.status(500).json({ error: error.message || "Failed to save data to Redis" });
     }
   });
 
