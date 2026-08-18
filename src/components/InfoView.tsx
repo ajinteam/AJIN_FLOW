@@ -532,7 +532,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
           console.warn('Local cache notice:', cacheErr);
         }
 
-        // 2. Upload to server storage (Strategy A: FormData Multipart, Strategy B: Base64 JSON)
+        // 2. Upload to server storage (Strategy A: FormData Multipart, Strategy B: Raw Binary)
         let savedUrl = '';
 
         // Strategy A: Standard FormData
@@ -556,35 +556,28 @@ export const InfoView: React.FC<InfoViewProps> = ({
           console.warn('FormData upload notice:', formErr);
         }
 
-        // Strategy B: Base64 JSON payload
+        // Strategy B: Raw Binary Stream Endpoint
         if (!savedUrl) {
           try {
-            const base64Data = await readFileAsDataUrl(fileBlob);
-            const jsonRes = await fetch('/api/upload-file', {
+            const rawRes = await fetch(`/api/upload-raw?filename=${encodeURIComponent(file.name)}`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                filename: file.name,
-                base64: base64Data
-              })
+              headers: {
+                'Content-Type': file.type || 'application/octet-stream',
+                'X-File-Name': encodeURIComponent(file.name)
+              },
+              body: fileBlob
             });
 
-            if (jsonRes.ok) {
-              const jsonResult = await jsonRes.json().catch(() => null);
-              if (jsonResult?.success && jsonResult?.url) {
-                savedUrl = jsonResult.url;
-                fileSize = jsonResult.size || fileSize;
+            if (rawRes.ok) {
+              const rawJson = await rawRes.json().catch(() => null);
+              if (rawJson?.success && rawJson?.url) {
+                savedUrl = rawJson.url;
+                fileSize = rawJson.size || fileSize;
               }
             }
-          } catch (jsonErr) {
-            console.warn('JSON upload notice:', jsonErr);
+          } catch (rawErr) {
+            console.warn('Raw upload notice:', rawErr);
           }
-        }
-
-        // Strategy C: Fallback to local storage URL if server is temporarily unreachable
-        if (!savedUrl) {
-          const base64Fallback = await readFileAsDataUrl(fileBlob);
-          savedUrl = base64Fallback;
         }
 
         const newFileObj: InfoFile = {
@@ -592,7 +585,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
           name: file.name,
           type: fileType,
           size: fileSize,
-          dataUrl: savedUrl,
+          dataUrl: savedUrl || '',
           uploadedAt: new Date().toISOString()
         };
 

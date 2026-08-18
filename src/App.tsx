@@ -557,10 +557,34 @@ export default function App() {
     });
 
     try {
+      // Sanitize infoProjects to ensure no giant base64 strings bloat Redis payloads
+      const sanitizedInfoProjects = (targetData.infoProjects || []).map((p: any) => ({
+        ...p,
+        files: (p.files || []).map((f: any) => {
+          let dUrl = f.dataUrl || '';
+          if (typeof dUrl === 'string' && dUrl.startsWith('data:')) {
+            dUrl = '';
+          }
+          return {
+            ...f,
+            dataUrl: dUrl,
+            sheetImages: (f.sheetImages || []).map((s: any) => ({
+              ...s,
+              dataUrl: typeof s.dataUrl === 'string' && s.dataUrl.startsWith('data:') ? '' : (s.dataUrl || '')
+            }))
+          };
+        })
+      }));
+
+      const payloadToSave = {
+        ...targetData,
+        infoProjects: sanitizedInfoProjects
+      };
+
       const res = await fetch('/api/data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(targetData)
+        body: JSON.stringify(payloadToSave)
       });
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
