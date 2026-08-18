@@ -231,6 +231,71 @@ export const InfoView: React.FC<InfoViewProps> = ({
   const [activeFileIndex, setActiveFileIndex] = useState<number>(0);
   const [docSearchQuery, setDocSearchQuery] = useState('');
 
+  // Mobile / Hardware Back Button Navigation Handler
+  useEffect(() => {
+    const handlePopState = () => {
+      if (isUploadModalOpen) {
+        setIsUploadModalOpen(false);
+      } else if (isProjectModalOpen) {
+        setIsProjectModalOpen(false);
+      } else if (viewerProject) {
+        setViewerProject(null);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [isUploadModalOpen, isProjectModalOpen, viewerProject]);
+
+  const openViewer = (project: InfoProject, fileIdx: number = 0) => {
+    try {
+      window.history.pushState({ modal: 'info-viewer' }, '');
+    } catch {}
+    setViewerProject(project);
+    setActiveFileIndex(fileIdx);
+    setDocSearchQuery('');
+  };
+
+  const closeViewer = () => {
+    setViewerProject(null);
+    if (window.history.state?.modal === 'info-viewer') {
+      window.history.back();
+    }
+  };
+
+  const closeUploadModal = () => {
+    setIsUploadModalOpen(false);
+    if (window.history.state?.modal === 'info-upload') {
+      window.history.back();
+    }
+  };
+
+  const closeProjectModal = () => {
+    setIsProjectModalOpen(false);
+    setEditingProject(null);
+    if (window.history.state?.modal === 'info-project') {
+      window.history.back();
+    }
+  };
+
+  const openUploadModal = (projectId?: string) => {
+    try {
+      window.history.pushState({ modal: 'info-upload' }, '');
+    } catch {}
+    setUploadTargetProjectId(projectId || (infoProjects[0]?.id || ''));
+    setIsUploadModalOpen(true);
+  };
+
+  const openProjectModal = (proj?: InfoProject) => {
+    try {
+      window.history.pushState({ modal: 'info-project' }, '');
+    } catch {}
+    setEditingProject(proj || null);
+    setIsProjectModalOpen(true);
+  };
+
   // Filter & Sort Projects
   const filteredProjects = useMemo(() => {
     const list = (infoProjects || []).filter((p) =>
@@ -623,10 +688,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
             <>
               {/* 프로젝트 추가 버튼 */}
               <button
-                onClick={() => {
-                  setEditingProject(null);
-                  setIsProjectModalOpen(true);
-                }}
+                onClick={() => openProjectModal()}
                 className="flex items-center gap-2 bg-[#3B82F6] hover:bg-blue-600 active:scale-95 text-white px-4 md:px-5 py-2.5 rounded-xl font-black text-sm md:text-base shadow-md shadow-blue-200 transition-all cursor-pointer"
               >
                 <Plus size={18} />
@@ -637,8 +699,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
               <button
                 onClick={() => {
                   const defaultTarget = infoProjects.find((p) => p.status !== 'completed')?.id || infoProjects[0]?.id || '';
-                  setUploadTargetProjectId(defaultTarget);
-                  setIsUploadModalOpen(true);
+                  openUploadModal(defaultTarget);
                 }}
                 className="flex items-center gap-2 bg-[#F59E0B] hover:bg-amber-600 active:scale-95 text-white px-4 md:px-5 py-2.5 rounded-xl font-black text-sm md:text-base shadow-md shadow-amber-200 transition-all cursor-pointer"
               >
@@ -721,10 +782,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
           </p>
           {isAdmin && activeTab !== 'completed' && (
             <button
-              onClick={() => {
-                setEditingProject(null);
-                setIsProjectModalOpen(true);
-              }}
+              onClick={() => openProjectModal()}
               className="inline-flex items-center gap-2 bg-blue-600 text-white px-6 py-2.5 rounded-xl font-bold text-sm hover:bg-blue-700 transition-all shadow-md shadow-blue-200"
             >
               <Plus size={18} />
@@ -746,11 +804,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
                 key={project.id}
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
-                onClick={() => {
-                  setViewerProject(project);
-                  setActiveFileIndex(0);
-                  setDocSearchQuery('');
-                }}
+                onClick={() => openViewer(project, 0)}
                 className={cn(
                   'group relative rounded-2xl p-4 md:p-5 transition-all shadow-md hover:shadow-lg cursor-pointer border select-none',
                   project.status === 'completed'
@@ -845,8 +899,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              setEditingProject(project);
-                              setIsProjectModalOpen(true);
+                              openProjectModal(project);
                             }}
                             className="p-2 bg-black/20 hover:bg-black/30 text-white rounded-xl transition-all"
                             title="프로젝트 수정"
@@ -947,7 +1000,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
 
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => setViewerProject(null)}
+                    onClick={closeViewer}
                     className="flex items-center gap-1.5 bg-slate-800 hover:bg-rose-600 px-3 py-1.5 rounded-xl text-white text-xs font-bold transition-colors cursor-pointer"
                     title="닫기"
                   >
@@ -1156,11 +1209,8 @@ export const InfoView: React.FC<InfoViewProps> = ({
                   {editingProject ? '프로젝트 정보 수정' : '새 프로젝트 등록'}
                 </h3>
                 <button
-                  onClick={() => {
-                    setIsProjectModalOpen(false);
-                    setEditingProject(null);
-                  }}
-                  className="p-1.5 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100"
+                  onClick={closeProjectModal}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 cursor-pointer"
                 >
                   <X size={18} />
                 </button>
@@ -1169,10 +1219,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
               <ProjectForm
                 initialData={editingProject}
                 onSave={handleSaveProject}
-                onCancel={() => {
-                  setIsProjectModalOpen(false);
-                  setEditingProject(null);
-                }}
+                onCancel={closeProjectModal}
               />
             </motion.div>
           </div>
@@ -1199,8 +1246,8 @@ export const InfoView: React.FC<InfoViewProps> = ({
                   <h3 className="text-lg font-black text-slate-900">도면 및 문서 업로드</h3>
                 </div>
                 <button
-                  onClick={() => setIsUploadModalOpen(false)}
-                  className="p-1.5 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100"
+                  onClick={closeUploadModal}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 cursor-pointer"
                 >
                   <X size={18} />
                 </button>
@@ -1211,7 +1258,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
                 selectedProjectId={uploadTargetProjectId}
                 onSelectProject={setUploadTargetProjectId}
                 onUpload={handleUploadFiles}
-                onCancel={() => setIsUploadModalOpen(false)}
+                onCancel={closeUploadModal}
                 isUploading={isUploading}
               />
             </motion.div>
@@ -1526,6 +1573,11 @@ const ExcelImageDocumentViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // Touch gesture state for pinch-to-zoom & double tap
+  const touchStartDistRef = useRef<number | null>(null);
+  const touchStartZoomRef = useRef<number>(1);
+  const lastTapRef = useRef<number>(0);
+
   // Sheets data & converted images
   const sheets = file.parsedSheets || [];
   const sheetImages = file.sheetImages || [];
@@ -1570,6 +1622,49 @@ const ExcelImageDocumentViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
 
   const handleMouseUp = () => setIsDragging(false);
 
+  // Touch handlers for mobile
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 2) {
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      touchStartDistRef.current = dist;
+      touchStartZoomRef.current = zoom;
+    } else if (e.touches.length === 1) {
+      const now = Date.now();
+      if (now - lastTapRef.current < 300) {
+        setZoom((prev) => (prev > 1.2 ? 1 : 2.2));
+        setPosition({ x: 0, y: 0 });
+      }
+      lastTapRef.current = now;
+      setIsDragging(true);
+      setDragStart({ x: e.touches[0].clientX - position.x, y: e.touches[0].clientY - position.y });
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (e.touches.length === 2 && touchStartDistRef.current !== null) {
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      const ratio = dist / touchStartDistRef.current;
+      const newZoom = Math.min(Math.max(0.5, touchStartZoomRef.current * ratio), 4.5);
+      setZoom(Number(newZoom.toFixed(2)));
+    } else if (e.touches.length === 1 && isDragging) {
+      setPosition({
+        x: e.touches[0].clientX - dragStart.x,
+        y: e.touches[0].clientY - dragStart.y
+      });
+    }
+  };
+
+  const handleTouchEnd = () => {
+    touchStartDistRef.current = null;
+    setIsDragging(false);
+  };
+
   const resetView = () => {
     setZoom(1);
     setRotation(0);
@@ -1579,7 +1674,7 @@ const ExcelImageDocumentViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
   return (
     <div className="flex-1 flex flex-col bg-slate-950 overflow-hidden select-none">
       {/* 1. Sheet Navigation Tabs Bar (PO, PACKING, etc.) */}
-      <div className="bg-slate-900 border-b border-slate-800 px-3 py-1.5 flex items-center justify-between gap-2 overflow-x-auto shrink-0 no-scrollbar">
+      <div className="bg-slate-900 border-b border-slate-800 px-2.5 md:px-4 py-1.5 flex items-center justify-between gap-2 overflow-x-auto shrink-0 no-scrollbar">
         <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
           <span className="text-[11px] font-black text-emerald-400 uppercase tracking-wider shrink-0 mr-1 flex items-center gap-1">
             <FileSpreadsheet size={13} />
@@ -1638,40 +1733,40 @@ const ExcelImageDocumentViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
       </div>
 
       {/* 2. Viewer Toolbar (Zoom, Rotate, Pan Info) */}
-      <div className="bg-slate-900/80 px-3 py-1 border-b border-slate-800 flex items-center justify-between text-xs text-slate-300 shrink-0">
-        <div className="flex items-center gap-1.5">
-          <span className="text-emerald-400 font-bold">[ {currentSheet.name} ]</span>
-          <span className="text-slate-500 text-[11px]">| 마우스 드래그로 화면 이동, 줌으로 확대/축소 가능</span>
+      <div className="bg-slate-900/80 px-2.5 md:px-4 py-1 border-b border-slate-800 flex items-center justify-between text-xs text-slate-300 shrink-0">
+        <div className="flex items-center gap-1.5 truncate">
+          <span className="text-emerald-400 font-bold truncate">[ {currentSheet.name} ]</span>
+          <span className="text-slate-500 text-[11px] hidden sm:inline">| 터치 핀치/드래그로 화면 이동</span>
         </div>
 
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 shrink-0">
           <button
             onClick={() => setZoom((z) => Math.max(0.4, z - 0.2))}
-            className="p-1 hover:bg-slate-800 rounded text-slate-300 hover:text-white"
+            className="p-1 hover:bg-slate-800 rounded text-slate-300 hover:text-white cursor-pointer"
             title="축소"
           >
             <ZoomOut size={14} />
           </button>
-          <span className="font-mono text-[11px] w-12 text-center text-slate-400 font-bold">
+          <span className="font-mono text-[11px] w-10 text-center text-slate-400 font-bold">
             {Math.round(zoom * 100)}%
           </span>
           <button
             onClick={() => setZoom((z) => Math.min(4, z + 0.2))}
-            className="p-1 hover:bg-slate-800 rounded text-slate-300 hover:text-white"
+            className="p-1 hover:bg-slate-800 rounded text-slate-300 hover:text-white cursor-pointer"
             title="확대"
           >
             <ZoomIn size={14} />
           </button>
           <button
             onClick={() => setRotation((r) => (r + 90) % 360)}
-            className="p-1 hover:bg-slate-800 rounded text-slate-300 hover:text-white ml-1"
+            className="p-1 hover:bg-slate-800 rounded text-slate-300 hover:text-white ml-0.5 cursor-pointer"
             title="90도 회전"
           >
             <RotateCw size={14} />
           </button>
           <button
             onClick={resetView}
-            className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 rounded text-[11px] font-bold text-slate-300 ml-1"
+            className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 rounded text-[11px] font-bold text-slate-300 ml-0.5 cursor-pointer"
             title="화면 맞춤"
           >
             맞춤
@@ -1686,25 +1781,29 @@ const ExcelImageDocumentViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
         className={cn(
-          'flex-1 overflow-auto bg-slate-950 relative flex items-center justify-center p-4',
-          isDragging ? 'cursor-grabbing' : 'cursor-grab'
+          'flex-1 overflow-auto bg-slate-950 relative flex items-center justify-center p-1 md:p-4',
+          isDragging ? 'cursor-grabbing select-none' : 'cursor-grab'
         )}
+        style={{ touchAction: 'pan-x pan-y pinch-zoom' }}
       >
         {viewMode === 'image' && currentSheetImage ? (
           <div
             style={{
               transform: `translate(${position.x}px, ${position.y}px) scale(${zoom}) rotate(${rotation}deg)`,
               transformOrigin: 'center center',
-              transition: isDragging ? 'none' : 'transform 0.1s ease-out'
+              transition: isDragging ? 'none' : 'transform 0.08s ease-out'
             }}
-            className="m-auto min-w-fit min-h-fit shadow-2xl rounded-lg overflow-hidden bg-white"
+            className="m-auto min-w-fit min-h-fit shadow-2xl rounded-lg overflow-hidden bg-white max-w-full"
           >
             <img
               src={currentSheetImage}
               alt={currentSheet.name}
               className="max-w-none block pointer-events-none"
-              style={{ maxHeight: '85vh', objectFit: 'contain' }}
+              style={{ maxHeight: '88vh', objectFit: 'contain' }}
             />
           </div>
         ) : (
@@ -1713,7 +1812,7 @@ const ExcelImageDocumentViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
             style={{
               transform: `translate(${position.x}px, ${position.y}px) scale(${zoom})`,
               transformOrigin: 'top center',
-              transition: isDragging ? 'none' : 'transform 0.1s ease-out'
+              transition: isDragging ? 'none' : 'transform 0.08s ease-out'
             }}
             className="m-auto min-w-fit bg-white text-slate-900 rounded-xl shadow-2xl p-4 overflow-hidden border border-slate-300"
           >
@@ -1748,6 +1847,11 @@ const ImageViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [localUrl, setLocalUrl] = useState(file.dataUrl);
 
+  // Touch gesture state
+  const touchStartDistRef = useRef<number | null>(null);
+  const touchStartZoomRef = useRef<number>(1);
+  const lastTapRef = useRef<number>(0);
+
   useEffect(() => {
     // If dataUrl is a local ID or needs IndexedDB fetch
     if (file.id) {
@@ -1774,6 +1878,49 @@ const ImageViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
 
   const handleMouseUp = () => setIsDragging(false);
 
+  // Touch events
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 2) {
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      touchStartDistRef.current = dist;
+      touchStartZoomRef.current = zoom;
+    } else if (e.touches.length === 1) {
+      const now = Date.now();
+      if (now - lastTapRef.current < 300) {
+        setZoom((prev) => (prev > 1.2 ? 1 : 2.2));
+        setPosition({ x: 0, y: 0 });
+      }
+      lastTapRef.current = now;
+      setIsDragging(true);
+      setDragStart({ x: e.touches[0].clientX - position.x, y: e.touches[0].clientY - position.y });
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (e.touches.length === 2 && touchStartDistRef.current !== null) {
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      const ratio = dist / touchStartDistRef.current;
+      const newZoom = Math.min(Math.max(0.5, touchStartZoomRef.current * ratio), 4.5);
+      setZoom(Number(newZoom.toFixed(2)));
+    } else if (e.touches.length === 1 && isDragging) {
+      setPosition({
+        x: e.touches[0].clientX - dragStart.x,
+        y: e.touches[0].clientY - dragStart.y
+      });
+    }
+  };
+
+  const handleTouchEnd = () => {
+    touchStartDistRef.current = null;
+    setIsDragging(false);
+  };
+
   const resetView = () => {
     setZoom(1);
     setRotation(0);
@@ -1782,40 +1929,40 @@ const ImageViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
 
   return (
     <div className="flex-1 flex flex-col bg-slate-950 overflow-hidden select-none">
-      <div className="bg-slate-900 px-3 py-1.5 border-b border-slate-800 flex items-center justify-between text-xs text-slate-300 shrink-0">
-        <div className="flex items-center gap-1.5">
-          <span className="font-bold text-amber-400">{file.name}</span>
-          <span className="text-slate-500 text-[11px]">| 좌클릭 드래그로 화면 이동</span>
+      <div className="bg-slate-900 px-2.5 md:px-4 py-1.5 border-b border-slate-800 flex items-center justify-between text-xs text-slate-300 shrink-0">
+        <div className="flex items-center gap-1.5 truncate">
+          <span className="font-bold text-amber-400 truncate">{file.name}</span>
+          <span className="text-slate-500 text-[11px] hidden sm:inline">| 터치 드래그로 이동</span>
         </div>
 
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 shrink-0">
           <button
             onClick={() => setZoom((z) => Math.max(0.4, z - 0.2))}
-            className="p-1 hover:bg-slate-800 rounded text-slate-300 hover:text-white"
+            className="p-1 hover:bg-slate-800 rounded text-slate-300 hover:text-white cursor-pointer"
             title="축소"
           >
             <ZoomOut size={14} />
           </button>
-          <span className="font-mono text-[11px] w-12 text-center text-slate-400 font-bold">
+          <span className="font-mono text-[11px] w-10 text-center text-slate-400 font-bold">
             {Math.round(zoom * 100)}%
           </span>
           <button
             onClick={() => setZoom((z) => Math.min(4, z + 0.2))}
-            className="p-1 hover:bg-slate-800 rounded text-slate-300 hover:text-white"
+            className="p-1 hover:bg-slate-800 rounded text-slate-300 hover:text-white cursor-pointer"
             title="확대"
           >
             <ZoomIn size={14} />
           </button>
           <button
             onClick={() => setRotation((r) => (r + 90) % 360)}
-            className="p-1 hover:bg-slate-800 rounded text-slate-300 hover:text-white ml-1"
+            className="p-1 hover:bg-slate-800 rounded text-slate-300 hover:text-white ml-0.5 cursor-pointer"
             title="90도 회전"
           >
             <RotateCw size={14} />
           </button>
           <button
             onClick={resetView}
-            className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 rounded text-[11px] font-bold text-slate-300 ml-1"
+            className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 rounded text-[11px] font-bold text-slate-300 ml-0.5 cursor-pointer"
             title="화면 맞춤"
           >
             맞춤
@@ -1828,24 +1975,28 @@ const ImageViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
         className={cn(
-          'flex-1 overflow-auto bg-slate-950 relative flex items-center justify-center p-4',
-          isDragging ? 'cursor-grabbing' : 'cursor-grab'
+          'flex-1 overflow-auto bg-slate-950 relative flex items-center justify-center p-1 md:p-4',
+          isDragging ? 'cursor-grabbing select-none' : 'cursor-grab'
         )}
+        style={{ touchAction: 'pan-x pan-y pinch-zoom' }}
       >
         <div
           style={{
             transform: `translate(${position.x}px, ${position.y}px) scale(${zoom}) rotate(${rotation}deg)`,
             transformOrigin: 'center center',
-            transition: isDragging ? 'none' : 'transform 0.1s ease-out'
+            transition: isDragging ? 'none' : 'transform 0.08s ease-out'
           }}
-          className="m-auto min-w-fit min-h-fit shadow-2xl rounded-lg overflow-hidden bg-slate-900"
+          className="m-auto min-w-fit min-h-fit shadow-2xl rounded-lg overflow-hidden bg-slate-900 max-w-full"
         >
           <img
-            src={localUrl}
+            src={localUrl || file.dataUrl}
             alt={file.name}
             className="max-w-none block pointer-events-none"
-            style={{ maxHeight: '85vh', objectFit: 'contain' }}
+            style={{ maxHeight: '88vh', objectFit: 'contain' }}
           />
         </div>
       </div>
