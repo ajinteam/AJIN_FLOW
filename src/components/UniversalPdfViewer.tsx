@@ -27,8 +27,10 @@ function cn(...inputs: any[]) {
 
 // Configure pdfjs worker with multiple reliable fallback CDNs
 try {
-  const workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version || '4.10.38'}/build/pdf.worker.min.mjs`;
-  pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
+  if (typeof window !== 'undefined' && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
+    const version = pdfjsLib.version || '4.10.38';
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
+  }
 } catch (e) {
   console.warn('PDF Worker config notice:', e);
 }

@@ -71,6 +71,7 @@ const Auth = ({ users, onLogin }: { users: UserConfig[], onLogin: (initials: str
       const inputPassword = password.trim().toUpperCase();
       
       if (inputPassword === MASTER_PASSWORD.toUpperCase()) {
+        localStorage.setItem('userInitials', 'MASTER');
         localStorage.setItem('isAuthorized', 'true');
         localStorage.setItem('currentUserPassword', MASTER_PASSWORD);
         localStorage.setItem('canAccessFlow', 'true');
@@ -82,6 +83,7 @@ const Auth = ({ users, onLogin }: { users: UserConfig[], onLogin: (initials: str
       const user = users.find(u => u.password.toUpperCase() === inputPassword);
 
       if (user) {
+        localStorage.setItem('userInitials', user.initials);
         localStorage.setItem('isAuthorized', (user.isAuthorized || user.password.toUpperCase().includes('5200')) ? 'true' : 'false');
         localStorage.setItem('currentUserPassword', user.password);
         localStorage.setItem('canAccessFlow', user.canAccessFlow !== false ? 'true' : 'false');

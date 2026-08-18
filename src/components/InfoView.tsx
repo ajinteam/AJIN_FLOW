@@ -186,6 +186,60 @@ function getDDayInfo(targetDateStr: string | null | undefined): { text: string; 
   }
 }
 
+// Helper to open / download Excel file directly for native Excel app viewing on Mobile & PC
+async function openExcelInNativeApp(file: InfoFile) {
+  try {
+    let blob: Blob | null = null;
+    if (file.id) {
+      const cached = await getLocalFileBlob(file.id);
+      if (cached?.blob) {
+        blob = cached.blob;
+      } else if (cached?.dataUrl && cached.dataUrl.startsWith('data:')) {
+        const res = await fetch(cached.dataUrl);
+        blob = await res.blob();
+      }
+    }
+
+    if (!blob && file.dataUrl) {
+      const res = await fetch(file.dataUrl);
+      blob = await res.blob();
+    }
+
+    if (blob) {
+      // Ensure proper excel mime type for mobile intent
+      const excelBlob = new Blob([blob], {
+        type: file.name.endsWith('.xls')
+          ? 'application/vnd.ms-excel'
+          : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      });
+      const blobUrl = URL.createObjectURL(excelBlob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = file.name;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+      return;
+    }
+
+    // Fallback: direct href
+    if (file.dataUrl) {
+      const link = document.createElement('a');
+      link.href = file.dataUrl;
+      link.download = file.name;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+  } catch (err) {
+    console.error('Error opening Excel file:', err);
+    if (file.dataUrl) {
+      window.open(file.dataUrl, '_blank');
+    }
+  }
+}
+
 // Sort files helper: Excel files come first, followed by others
 function sortFilesWithExcelFirst(files: InfoFile[]): InfoFile[] {
   return [...files].sort((a, b) => {
@@ -921,24 +975,48 @@ export const InfoView: React.FC<InfoViewProps> = ({
                 </div>
 
                 {/* Bottom Bar: Attached File Badge & Click Prompt */}
-                <div className="mt-3 pt-2.5 border-t border-white/20 flex items-center justify-between text-xs text-emerald-100">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-bold flex items-center gap-1 bg-black/20 px-2 py-0.5 rounded-md text-white">
+                <div className="mt-3 pt-2.5 border-t border-white/20 flex items-center justify-between text-xs text-emerald-100 flex-wrap gap-2">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="font-bold flex items-center gap-1 bg-black/25 px-2 py-0.5 rounded-md text-white">
                       <FileText size={13} />
                       문서 {fileCount}개
                     </span>
+
+                    {/* Quick Excel App View Button right on card */}
                     {excelCount > 0 && (
-                      <span className="bg-emerald-800/90 text-white px-2 py-0.5 rounded text-[11px] font-black flex items-center gap-1">
-                        <Sparkles size={11} className="text-amber-300" />
-                        엑셀(문서이미지) {excelCount}
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          const firstExcel = (project.files || []).find((f) => f.type === 'excel');
+                          if (firstExcel) {
+                            await openExcelInNativeApp(firstExcel);
+                            showAlert('엑셀 열람', `[${firstExcel.name}] 파일을 기기 기본 엑셀 앱으로 열었습니다.`, 'info');
+                          }
+                        }}
+                        className="bg-emerald-800 hover:bg-emerald-700 active:scale-95 text-white px-2.5 py-1 rounded-lg text-[11px] font-black flex items-center gap-1.5 shadow-sm border border-emerald-600 transition-all cursor-pointer"
+                        title="기기에 설치된 엑셀 앱으로 즉시 열기"
+                      >
+                        <FileSpreadsheet size={13} className="text-emerald-300" />
+                        <span>엑셀 앱으로 열기 ({excelCount})</span>
+                      </button>
+                    )}
+
+                    {pdfCount > 0 && (
+                      <span className="bg-rose-500/80 text-white px-2 py-0.5 rounded-md text-[11px] font-bold flex items-center gap-1">
+                        <FileText size={11} />
+                        PDF 도면 {pdfCount}
                       </span>
                     )}
-                    {pdfCount > 0 && <span className="bg-rose-500/80 text-white px-1.5 py-0.5 rounded text-[11px] font-bold">PDF {pdfCount}</span>}
-                    {imageCount > 0 && <span className="bg-amber-600/80 text-white px-1.5 py-0.5 rounded text-[11px] font-bold">사진 {imageCount}</span>}
+                    {imageCount > 0 && (
+                      <span className="bg-amber-600/80 text-white px-2 py-0.5 rounded-md text-[11px] font-bold flex items-center gap-1">
+                        <ImageIcon size={11} />
+                        사진 {imageCount}
+                      </span>
+                    )}
                   </div>
 
-                  <div className="flex items-center gap-1 font-bold text-white group-hover:translate-x-0.5 transition-transform">
-                    <span>터치하여 도면/문서 전체화면 열람</span>
+                  <div className="flex items-center gap-1 font-bold text-white group-hover:translate-x-0.5 transition-transform ml-auto">
+                    <span>도면/문서 뷰어 열기</span>
                     <ChevronRight size={15} />
                   </div>
                 </div>
@@ -1125,14 +1203,40 @@ export const InfoView: React.FC<InfoViewProps> = ({
                             </div>
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0">
-                            <a
-                              href={currentFile.dataUrl}
-                              download={currentFile.name}
+                            {/* Native Excel App Open Button */}
+                            {currentFile.type === 'excel' && (
+                              <button
+                                onClick={async () => {
+                                  await openExcelInNativeApp(currentFile);
+                                  showAlert('엑셀 열람', `[${currentFile.name}] 기기 기본 엑셀 앱(Excel/한컴/구글시트)으로 실행했습니다.`, 'info');
+                                }}
+                                className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-sm transition-all cursor-pointer"
+                                title="스마트폰/PC 기본 엑셀 앱으로 열기"
+                              >
+                                <FileSpreadsheet size={14} />
+                                <span>엑셀 앱으로 열기</span>
+                              </button>
+                            )}
+
+                            <button
+                              onClick={async () => {
+                                if (currentFile.type === 'excel') {
+                                  await openExcelInNativeApp(currentFile);
+                                } else {
+                                  const link = document.createElement('a');
+                                  link.href = currentFile.dataUrl;
+                                  link.download = currentFile.name;
+                                  document.body.appendChild(link);
+                                  link.click();
+                                  document.body.removeChild(link);
+                                }
+                              }}
                               className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs transition-all cursor-pointer"
+                              title="파일 다운로드"
                             >
                               <Download size={13} />
                               <span className="hidden sm:inline">다운로드</span>
-                            </a>
+                            </button>
                             {isAdmin && (
                               <button
                                 onClick={() => handleDeleteFile(viewerProject.id, currentFile.id)}
@@ -1147,9 +1251,9 @@ export const InfoView: React.FC<InfoViewProps> = ({
 
                         {/* Rendering by Type */}
                         <div className="flex-1 overflow-hidden flex flex-col">
-                          {/* 1. Excel File Viewer (Crisp Converted Document Image / Wide Mode) */}
+                          {/* 1. Excel File Viewer (Native App Launch + Clean Sheet Preview) */}
                           {currentFile.type === 'excel' && (
-                            <ExcelImageDocumentViewer file={currentFile} />
+                            <ExcelNativeAndDocumentViewer file={currentFile} onOpenNative={() => openExcelInNativeApp(currentFile)} />
                           )}
 
                           {/* 2. PDF File Viewer (Zero Left-Cut, Smooth Pan & Search) */}
@@ -1560,10 +1664,10 @@ const UploadModalContent: React.FC<{
 };
 
 // ============================================================================
-// Sub Component: High-Resolution Excel Document Image Viewer (PO, PACKING, etc.)
-// Renders clean, beautiful document sheets as images with Pan & Zoom!
+// Sub Component: Excel Viewer (Native App Launch Priority + In-App Preview)
+// Opens directly in native Excel app on phone/PC, plus in-app clean sheet viewer!
 // ============================================================================
-const ExcelImageDocumentViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
+const ExcelNativeAndDocumentViewer: React.FC<{ file: InfoFile; onOpenNative: () => void }> = ({ file, onOpenNative }) => {
   const [activeSheetIdx, setActiveSheetIdx] = useState(0);
   const [viewMode, setViewMode] = useState<'image' | 'table'>('image');
   const [zoom, setZoom] = useState(1);
@@ -1673,34 +1777,63 @@ const ExcelImageDocumentViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
 
   return (
     <div className="flex-1 flex flex-col bg-slate-950 overflow-hidden select-none">
-      {/* 1. Sheet Navigation Tabs Bar (PO, PACKING, etc.) */}
+      {/* 1. Native Excel App Quick Launcher Hero Banner */}
+      <div className="bg-emerald-950/60 border-b border-emerald-800/60 px-3 md:px-5 py-2.5 flex items-center justify-between gap-3 shrink-0 flex-wrap">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-9 h-9 bg-emerald-600 rounded-xl flex items-center justify-center text-white shrink-0 shadow-sm">
+            <FileSpreadsheet size={20} />
+          </div>
+          <div className="truncate">
+            <h4 className="text-xs md:text-sm font-black text-white flex items-center gap-1.5 truncate">
+              <span>{file.name}</span>
+              <span className="text-emerald-400 font-normal text-[11px] hidden sm:inline">(기기 기본 엑셀 앱 연동)</span>
+            </h4>
+            <p className="text-[11px] text-emerald-200/80">
+              휴대폰/PC에 설치된 엑셀(한컴/Excel/구글시트)로 열람 후 닫으면 앱으로 바로 복귀됩니다.
+            </p>
+          </div>
+        </div>
+
+        <button
+          onClick={onOpenNative}
+          className="flex items-center gap-2 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-black text-xs md:text-sm rounded-xl shadow-lg shadow-emerald-900/40 transition-all cursor-pointer shrink-0 ml-auto"
+        >
+          <FileSpreadsheet size={16} className="text-slate-950" />
+          <span>기기 엑셀 앱으로 열기 (원클릭)</span>
+        </button>
+      </div>
+
+      {/* 2. Sheet Navigation Tabs Bar (PO, PACKING, etc.) */}
       <div className="bg-slate-900 border-b border-slate-800 px-2.5 md:px-4 py-1.5 flex items-center justify-between gap-2 overflow-x-auto shrink-0 no-scrollbar">
         <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
           <span className="text-[11px] font-black text-emerald-400 uppercase tracking-wider shrink-0 mr-1 flex items-center gap-1">
-            <FileSpreadsheet size={13} />
             시트 선택:
           </span>
-          {sheets.map((sheet, idx) => {
-            const isActive = idx === activeSheetIdx;
-            return (
-              <button
-                key={sheet.name}
-                onClick={() => {
-                  setActiveSheetIdx(idx);
-                  resetView();
-                }}
-                className={cn(
-                  'px-3 py-1 rounded-lg text-xs font-black transition-all shrink-0 border cursor-pointer flex items-center gap-1.5',
-                  isActive
-                    ? 'bg-emerald-600 text-white border-emerald-500 shadow-sm'
-                    : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200 hover:bg-slate-700'
-                )}
-              >
-                <span>{sheet.name.toUpperCase()}</span>
-                <span className="text-[10px] opacity-75">({sheet.data.length}행)</span>
-              </button>
-            );
-          })}
+          {sheets.length === 0 ? (
+            <span className="text-xs text-slate-400">시트 정보 없음</span>
+          ) : (
+            sheets.map((sheet, idx) => {
+              const isActive = idx === activeSheetIdx;
+              return (
+                <button
+                  key={sheet.name}
+                  onClick={() => {
+                    setActiveSheetIdx(idx);
+                    resetView();
+                  }}
+                  className={cn(
+                    'px-3 py-1 rounded-lg text-xs font-black transition-all shrink-0 border cursor-pointer flex items-center gap-1.5',
+                    isActive
+                      ? 'bg-emerald-600 text-white border-emerald-500 shadow-sm'
+                      : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200 hover:bg-slate-700'
+                  )}
+                >
+                  <span>{sheet.name.toUpperCase()}</span>
+                  <span className="text-[10px] opacity-75">({sheet.data.length}행)</span>
+                </button>
+              );
+            })
+          )}
         </div>
 
         {/* View Mode Switcher (Clean Document Image vs Raw Table Grid) */}
@@ -1732,7 +1865,7 @@ const ExcelImageDocumentViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
         </div>
       </div>
 
-      {/* 2. Viewer Toolbar (Zoom, Rotate, Pan Info) */}
+      {/* 3. Viewer Toolbar (Zoom, Rotate, Pan Info) */}
       <div className="bg-slate-900/80 px-2.5 md:px-4 py-1 border-b border-slate-800 flex items-center justify-between text-xs text-slate-300 shrink-0">
         <div className="flex items-center gap-1.5 truncate">
           <span className="text-emerald-400 font-bold truncate">[ {currentSheet.name} ]</span>
@@ -1774,7 +1907,7 @@ const ExcelImageDocumentViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
         </div>
       </div>
 
-      {/* 3. Main Viewer Canvas Area */}
+      {/* 4. Main Viewer Canvas Area */}
       <div
         ref={containerRef}
         onMouseDown={handleMouseDown}
