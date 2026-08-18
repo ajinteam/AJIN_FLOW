@@ -139,6 +139,8 @@ function getDDayInfo(targetDateStr: string | null | undefined): { text: string; 
 async function openExcelDirectly(file: InfoFile) {
   try {
     let blob: Blob | null = null;
+
+    // 1. Try local IndexedDB cache
     if (file.id) {
       const cached = await getLocalFileBlob(file.id);
       if (cached?.blob) {
@@ -149,10 +151,35 @@ async function openExcelDirectly(file: InfoFile) {
       }
     }
 
-    if (!blob && file.dataUrl) {
-      if (file.dataUrl.startsWith('data:')) {
-        const res = await fetch(file.dataUrl);
-        blob = await res.blob();
+    // 2. If not in local cache, fetch from server endpoints (resolves from disk or auto-restored from Redis)
+    if (!blob) {
+      const candidateUrls = [
+        file.dataUrl,
+        file.id ? `/api/file/${encodeURIComponent(file.id)}` : '',
+        file.name ? `/uploads/${encodeURIComponent(file.name)}` : ''
+      ].filter(Boolean) as string[];
+
+      for (const targetUrl of candidateUrls) {
+        try {
+          const res = await fetch(targetUrl);
+          if (res.ok) {
+            const downloadedBlob = await res.blob();
+            if (downloadedBlob && downloadedBlob.size > 0) {
+              blob = downloadedBlob;
+              // Cache in IndexedDB on this device for future instant opens
+              if (file.id) {
+                await saveLocalFileBlob(file.id, {
+                  blob: downloadedBlob,
+                  name: file.name,
+                  type: 'excel'
+                });
+              }
+              break;
+            }
+          }
+        } catch (fetchErr) {
+          console.warn(`Failed to fetch Excel from ${targetUrl}:`, fetchErr);
+        }
       }
     }
 
@@ -540,8 +567,12 @@ export const InfoView: React.FC<InfoViewProps> = ({
           const formData = new FormData();
           formData.append('file', fileBlob, file.name);
 
-          const uploadRes = await fetch('/api/upload-file', {
+          const uploadRes = await fetch(`/api/upload-file?fileId=${encodeURIComponent(fileId)}`, {
             method: 'POST',
+            headers: {
+              'X-File-Id': encodeURIComponent(fileId),
+              'X-File-Name': encodeURIComponent(file.name)
+            },
             body: formData
           });
 
@@ -559,10 +590,11 @@ export const InfoView: React.FC<InfoViewProps> = ({
         // Strategy B: Raw Binary Stream Endpoint
         if (!savedUrl) {
           try {
-            const rawRes = await fetch(`/api/upload-raw?filename=${encodeURIComponent(file.name)}`, {
+            const rawRes = await fetch(`/api/upload-raw?fileId=${encodeURIComponent(fileId)}&filename=${encodeURIComponent(file.name)}`, {
               method: 'POST',
               headers: {
                 'Content-Type': file.type || 'application/octet-stream',
+                'X-File-Id': encodeURIComponent(fileId),
                 'X-File-Name': encodeURIComponent(file.name)
               },
               body: fileBlob
@@ -585,7 +617,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
           name: file.name,
           type: fileType,
           size: fileSize,
-          dataUrl: savedUrl || '',
+          dataUrl: savedUrl || `/api/file/${encodeURIComponent(fileId)}`,
           uploadedAt: new Date().toISOString()
         };
 
@@ -1300,24 +1332,54 @@ const PdfViewerWrapper: React.FC<{ file: InfoFile; initialSearchQuery?: string }
 
     const resolvePdfUrl = async () => {
       try {
+        // 1. Check local IndexedDB cache first
         if (file.id) {
           const cached = await getLocalFileBlob(file.id);
-          if (cached?.dataUrl && isMounted) {
-            setResolvedUrl(cached.dataUrl);
-            setIsLoading(false);
-            return;
-          } else if (cached?.blob && isMounted) {
+          if (cached?.blob && isMounted) {
             const url = URL.createObjectURL(cached.blob);
             setResolvedUrl(url);
+            setIsLoading(false);
+            return;
+          } else if (cached?.dataUrl && isMounted) {
+            setResolvedUrl(cached.dataUrl);
             setIsLoading(false);
             return;
           }
         }
 
-        if (file.dataUrl && isMounted) {
-          setResolvedUrl(file.dataUrl);
-          setIsLoading(false);
-          return;
+        // 2. If not cached locally (e.g. on Mobile device), fetch from server
+        const candidateUrls = [
+          file.dataUrl,
+          file.id ? `/api/file/${encodeURIComponent(file.id)}` : '',
+          file.name ? `/uploads/${encodeURIComponent(file.name)}` : '',
+          file.name ? `/api/file/${encodeURIComponent(file.name)}` : ''
+        ].filter(Boolean) as string[];
+
+        for (const targetUrl of candidateUrls) {
+          try {
+            const res = await fetch(targetUrl);
+            if (res.ok) {
+              const blob = await res.blob();
+              if (blob && blob.size > 0) {
+                // Cache into IndexedDB on this device for instant zero-latency opening next time
+                if (file.id) {
+                  await saveLocalFileBlob(file.id, {
+                    blob,
+                    name: file.name,
+                    type: 'pdf'
+                  });
+                }
+                if (isMounted) {
+                  const url = URL.createObjectURL(blob);
+                  setResolvedUrl(url);
+                  setIsLoading(false);
+                  return;
+                }
+              }
+            }
+          } catch (fetchErr) {
+            console.warn(`PDF remote fetch notice for ${targetUrl}:`, fetchErr);
+          }
         }
 
         if (isMounted) {
@@ -1338,7 +1400,7 @@ const PdfViewerWrapper: React.FC<{ file: InfoFile; initialSearchQuery?: string }
     return () => {
       isMounted = false;
     };
-  }, [file.id, file.dataUrl]);
+  }, [file.id, file.dataUrl, file.name]);
 
   if (isLoading) {
     return (
@@ -1377,7 +1439,7 @@ const ImageViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-  const [localUrl, setLocalUrl] = useState(file.dataUrl);
+  const [localUrl, setLocalUrl] = useState(file.dataUrl || '');
 
   // Touch gesture state
   const touchStartDistRef = useRef<number | null>(null);
@@ -1385,14 +1447,29 @@ const ImageViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
   const lastTapRef = useRef<number>(0);
 
   useEffect(() => {
-    if (file.id) {
-      getLocalFileBlob(file.id).then((cached) => {
-        if (cached && cached.dataUrl) {
+    let isMounted = true;
+    const loadImage = async () => {
+      if (file.id) {
+        const cached = await getLocalFileBlob(file.id);
+        if (cached?.dataUrl && isMounted) {
           setLocalUrl(cached.dataUrl);
+          return;
+        } else if (cached?.blob && isMounted) {
+          setLocalUrl(URL.createObjectURL(cached.blob));
+          return;
         }
-      });
-    }
-  }, [file.id]);
+      }
+
+      if (file.dataUrl && isMounted) {
+        setLocalUrl(file.dataUrl);
+      } else if (file.id && isMounted) {
+        setLocalUrl(`/api/file/${encodeURIComponent(file.id)}`);
+      }
+    };
+
+    loadImage();
+    return () => { isMounted = false; };
+  }, [file.id, file.dataUrl]);
 
   const handleMouseDown = (e: React.MouseEvent) => {
     setIsDragging(true);
