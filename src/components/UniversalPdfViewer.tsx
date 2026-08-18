@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
+// Import worker directly via Vite's URL loader for 100% reliable zero-network-fail worker loading
+import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { 
   ZoomIn, 
   ZoomOut, 
@@ -20,6 +22,20 @@ import { twMerge } from 'tailwind-merge';
 
 function cn(...inputs: any[]) {
   return twMerge(clsx(inputs));
+}
+
+// Configure pdfjs worker using Vite-bundled worker URL + fallback CDN
+try {
+  if (typeof window !== 'undefined') {
+    if (pdfjsWorker) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+    } else {
+      const version = pdfjsLib.version || '6.2.108';
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
+    }
+  }
+} catch (e) {
+  console.warn('PDF Worker setup notice:', e);
 }
 
 // Convert Base64 data URL to Uint8Array safely for zero-overhead fast parsing
@@ -88,7 +104,7 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
   const touchStartScaleRef = useRef<number>(scale);
   const lastTapRef = useRef<number>(0);
 
-  // Load PDF Document safely without Web Worker (Zero worker network crashes)
+  // Load PDF Document safely
   useEffect(() => {
     let isMounted = true;
     setLoading(true);
@@ -105,6 +121,11 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
       try {
         let loadingTask: any;
 
+        // Ensure workerSrc is always assigned before getDocument
+        if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+          pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker || `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version || '6.2.108'}/build/pdf.worker.min.mjs`;
+        }
+
         // If URL is base64
         if (url.startsWith('data:')) {
           const binaryData = base64ToUint8Array(url);
@@ -113,7 +134,6 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
               data: binaryData,
               cMapPacked: true,
               enableXfa: false,
-              disableWorker: true,
             });
           }
         }
@@ -129,7 +149,6 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
               data: new Uint8Array(arrayBuffer),
               cMapPacked: true,
               enableXfa: false,
-              disableWorker: true,
             });
           } catch (fetchErr) {
             // Fallback directly with url
@@ -137,7 +156,6 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
               url,
               cMapPacked: true,
               enableXfa: false,
-              disableWorker: true,
             });
           }
         }
@@ -511,7 +529,7 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
         </div>
       )}
 
-      {/* 3. Main Viewer Layout (Sidebar Thumbnails + Continuous Continuous Feed) */}
+      {/* 3. Main Viewer Layout (Sidebar Thumbnails + Continuous Document Canvas) */}
       <div className="flex-1 flex overflow-hidden relative">
         {/* Left: Continuous Thumbnails Sidebar */}
         {showSidebar && pdfDoc && (
@@ -594,7 +612,7 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
             </div>
           )}
 
-          {/* Continuous Document Pages (Render with immediate zero-blank loading) */}
+          {/* Continuous Document Pages */}
           {!loading && !error && pdfDoc && (
             <div className="m-auto inline-flex flex-col items-center gap-6 md:gap-10 min-w-fit min-h-fit py-2">
               {Array.from({ length: numPages }, (_, i) => i + 1).map((pageNum) => {
@@ -629,7 +647,7 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
   );
 };
 
-// Sub-Component: Page Canvas Renderer (Optimized & Reliable)
+// Sub-Component: Page Canvas Renderer
 interface PdfPageCanvasProps {
   pdfDoc: any;
   pageNum: number;
@@ -668,7 +686,7 @@ const PdfPageCanvas: React.FC<PdfPageCanvasProps> = ({ pdfDoc, pageNum, scale, r
         const context = canvas.getContext('2d', { alpha: false });
         if (!context) return;
 
-        // Cap pixel ratio to 1.25 for absolute mobile stability and crisp text
+        // Cap pixel ratio to 1.25 for absolute stability & crisp rendering
         const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.25);
         canvas.width = Math.floor(viewport.width * pixelRatio);
         canvas.height = Math.floor(viewport.height * pixelRatio);
