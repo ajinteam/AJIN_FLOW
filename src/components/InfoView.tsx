@@ -523,27 +523,54 @@ export const InfoView: React.FC<InfoViewProps> = ({
 
         // 1. Upload binary file directly to server uploads folder
         let savedUrl = '';
-        try {
-          const formData = new FormData();
-          formData.append('file', fileBlob, file.name);
+        let uploadErrorMsg = '';
 
-          const uploadRes = await fetch('/api/upload-file', {
+        // Strategy A: Direct Raw Binary Streaming (Fastest, zero multipart overhead, supports 100MB+)
+        try {
+          const rawRes = await fetch(`/api/upload-raw?filename=${encodeURIComponent(file.name)}`, {
             method: 'POST',
-            body: formData
+            headers: {
+              'Content-Type': file.type || 'application/octet-stream',
+              'X-File-Name': encodeURIComponent(file.name)
+            },
+            body: fileBlob
           });
 
-          if (uploadRes.ok) {
-            const uploadJson = await uploadRes.json();
-            if (uploadJson.success && uploadJson.url) {
-              savedUrl = uploadJson.url;
-              fileSize = uploadJson.size || fileSize;
+          if (rawRes.ok) {
+            const rawJson = await rawRes.json().catch(() => null);
+            if (rawJson?.success && rawJson?.url) {
+              savedUrl = rawJson.url;
+              fileSize = rawJson.size || fileSize;
             }
           }
-        } catch (formErr) {
-          console.warn('FormData upload attempt:', formErr);
+        } catch (rawErr: any) {
+          console.warn('Raw streaming attempt notice:', rawErr);
         }
 
-        // Fallback: If FormData upload failed or returned non-200, use JSON Base64 upload to server
+        // Strategy B: Multipart FormData upload
+        if (!savedUrl) {
+          try {
+            const formData = new FormData();
+            formData.append('file', fileBlob, file.name);
+
+            const uploadRes = await fetch('/api/upload-file', {
+              method: 'POST',
+              body: formData
+            });
+
+            if (uploadRes.ok) {
+              const uploadJson = await uploadRes.json().catch(() => null);
+              if (uploadJson?.success && uploadJson?.url) {
+                savedUrl = uploadJson.url;
+                fileSize = uploadJson.size || fileSize;
+              }
+            }
+          } catch (formErr) {
+            console.warn('FormData upload attempt notice:', formErr);
+          }
+        }
+
+        // Strategy C: JSON Base64 upload fallback
         if (!savedUrl) {
           try {
             const base64Data = await readFileAsDataUrl(fileBlob);
@@ -557,19 +584,20 @@ export const InfoView: React.FC<InfoViewProps> = ({
             });
 
             if (jsonRes.ok) {
-              const jsonResult = await jsonRes.json();
-              if (jsonResult.success && jsonResult.url) {
+              const jsonResult = await jsonRes.json().catch(() => null);
+              if (jsonResult?.success && jsonResult?.url) {
                 savedUrl = jsonResult.url;
                 fileSize = jsonResult.size || fileSize;
               }
             }
-          } catch (jsonErr) {
-            console.warn('JSON upload attempt:', jsonErr);
+          } catch (jsonErr: any) {
+            console.warn('JSON upload attempt notice:', jsonErr);
+            uploadErrorMsg = jsonErr?.message || '';
           }
         }
 
         if (!savedUrl) {
-          throw new Error('서버 파일 저장에 실패했습니다. 다시 시도해주세요.');
+          throw new Error(`파일 '${file.name}' 저장에 실패했습니다. (${uploadErrorMsg || '서버 통신 오류'})`);
         }
 
         // 2. Cache raw Blob locally in IndexedDB for instant zero-latency loading

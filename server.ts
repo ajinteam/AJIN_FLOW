@@ -48,15 +48,57 @@ async function startServer() {
     next();
   });
 
-  // Body parser limits for JSON and form requests
-  app.use(express.json({ limit: '100mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '100mb' }));
-
   // Ensure uploads directory exists
   const uploadsDir = path.join(process.cwd(), 'uploads');
   if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
+
+  // 1. Raw binary streaming endpoint (Placed before express.json body parsers for pure stream piping)
+  app.all("/api/upload-raw", (req, res) => {
+    if (req.method === "OPTIONS") return res.sendStatus(200);
+    if (req.method === "GET") return res.json({ status: "ready" });
+
+    try {
+      let rawName = (req.query.filename as string) || (req.headers['x-file-name'] as string) || 'file';
+      try {
+        rawName = decodeURIComponent(rawName);
+      } catch {}
+
+      const cleanName = safeCleanFilename(rawName);
+      const timestamp = Date.now();
+      const savedFileName = `${timestamp}_${cleanName}`;
+      const filePath = path.join(uploadsDir, savedFileName);
+
+      const writeStream = fs.createWriteStream(filePath);
+
+      req.pipe(writeStream);
+
+      writeStream.on('finish', () => {
+        const stats = fs.statSync(filePath);
+        const fileUrl = `/uploads/${encodeURIComponent(savedFileName)}`;
+        return res.json({
+          success: true,
+          url: fileUrl,
+          filename: savedFileName,
+          originalName: cleanName,
+          size: stats.size
+        });
+      });
+
+      writeStream.on('error', (err) => {
+        console.error("Stream write error:", err);
+        return res.status(500).json({ success: false, error: err.message || "파일 저장 중 오류가 발생했습니다." });
+      });
+    } catch (err: any) {
+      console.error("upload-raw error:", err);
+      return res.status(500).json({ success: false, error: err.message || "파일 업로드 처리 오류" });
+    }
+  });
+
+  // Body parser limits for JSON and form requests
+  app.use(express.json({ limit: '100mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
   // Multer configuration for streaming direct binary uploads up to 100MB
   const storage = multer.diskStorage({
