@@ -20,11 +20,15 @@ export interface InfoFile {
   name: string;
   type: 'pdf' | 'excel' | 'image' | 'other';
   size: number;
-  dataUrl: string; // Base64 data URL
+  dataUrl: string; // URL or Base64 data URL
   uploadedAt: string;
   parsedSheets?: {
     name: string;
     data: any[][];
+  }[];
+  sheetImages?: {
+    name: string;
+    dataUrl: string;
   }[];
 }
 
