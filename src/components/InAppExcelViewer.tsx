@@ -63,7 +63,7 @@ export const InAppExcelViewer: React.FC<InAppExcelViewerProps> = ({
       try {
         let arrayBuffer: ArrayBuffer | null = null;
 
-        // 1. Try local IndexedDB Cache
+        // 1. Try local IndexedDB Cache first
         if (fileId) {
           try {
             const cached = await getLocalFileBlob(fileId);
@@ -80,11 +80,26 @@ export const InAppExcelViewer: React.FC<InAppExcelViewerProps> = ({
 
         // 2. Try provided dataUrl
         if (!arrayBuffer && dataUrl) {
-          const res = await fetch(dataUrl);
-          arrayBuffer = await res.arrayBuffer();
+          if (dataUrl.startsWith('data:')) {
+            const res = await fetch(dataUrl);
+            arrayBuffer = await res.arrayBuffer();
+          } else {
+            // Server URL fetch with robust response validation
+            const res = await fetch(dataUrl);
+            if (!res.ok) {
+              throw new Error(`파일을 서버에서 불러올 수 없습니다 (HTTP ${res.status}). PC에서 파일을 다시 한번 업로드 해주세요.`);
+            }
+
+            const contentType = res.headers.get('content-type') || '';
+            if (contentType.includes('text/html')) {
+              throw new Error('서버에 파일이 존재하지 않아 오류 페이지가 반환되었습니다. 파일이 업로드된 기기(PC)에서 다시 한번 확인해주세요.');
+            }
+
+            arrayBuffer = await res.arrayBuffer();
+          }
         }
 
-        if (!arrayBuffer) {
+        if (!arrayBuffer || arrayBuffer.byteLength === 0) {
           throw new Error('엑셀 파일 데이터를 찾을 수 없습니다.');
         }
 
@@ -204,7 +219,7 @@ export const InAppExcelViewer: React.FC<InAppExcelViewerProps> = ({
       <div className="flex-1 flex flex-col items-center justify-center p-8 bg-slate-900 text-center">
         <AlertCircle size={44} className="text-rose-400 mb-3" />
         <h4 className="text-base font-bold text-white mb-1">엑셀 내용을 표시할 수 없습니다</h4>
-        <p className="text-xs text-slate-400 mb-4">{error || '시트 데이터가 없습니다.'}</p>
+        <p className="text-xs text-slate-400 mb-4 max-w-md">{error || '시트 데이터가 없습니다.'}</p>
         {onDownloadNative && (
           <button
             onClick={onDownloadNative}

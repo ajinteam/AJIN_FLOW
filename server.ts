@@ -61,7 +61,44 @@ async function startServer() {
     limits: { fileSize: 100 * 1024 * 1024 } // 100MB limit
   });
 
-  // Serve uploaded files statically
+  // Serve uploaded files explicitly with exact UTF-8 and raw filename resolution (Avoid 404 HTML fallback)
+  app.get('/uploads/:filename', (req, res) => {
+    try {
+      const rawParam = req.params.filename;
+      let decodedFilename = rawParam;
+      try {
+        decodedFilename = decodeURIComponent(rawParam);
+      } catch {}
+
+      // Check decoded filename first, then rawParam
+      let targetPath = path.join(uploadsDir, decodedFilename);
+      if (!fs.existsSync(targetPath)) {
+        targetPath = path.join(uploadsDir, rawParam);
+      }
+
+      if (fs.existsSync(targetPath) && fs.statSync(targetPath).isFile()) {
+        const ext = path.extname(targetPath).toLowerCase();
+        if (ext === '.pdf') {
+          res.setHeader('Content-Type', 'application/pdf');
+        } else if (ext === '.xlsx') {
+          res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        } else if (ext === '.xls') {
+          res.setHeader('Content-Type', 'application/vnd.ms-excel');
+        } else if (['.jpg', '.jpeg'].includes(ext)) {
+          res.setHeader('Content-Type', 'image/jpeg');
+        } else if (ext === '.png') {
+          res.setHeader('Content-Type', 'image/png');
+        }
+        return res.sendFile(targetPath);
+      }
+
+      // If not found in uploads folder, return JSON 404 instead of HTML SPA
+      return res.status(404).json({ error: 'File not found on server storage' });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || 'File download error' });
+    }
+  });
+
   app.use('/uploads', express.static(uploadsDir));
 
   // Health check
@@ -181,17 +218,24 @@ async function startServer() {
         infoProjectsList = flowData.infoProjects;
       }
 
+      const users = flowData.users || defaults.users;
+      const projects = flowData.projects || defaults.projects;
+      const processes = flowData.processes || defaults.processes;
+      const tasks = flowData.tasks || defaults.tasks;
+      const processParts = flowData.processParts || defaults.processParts;
+      const infoProjects = infoProjectsList || defaults.infoProjects;
+
       res.json({
-        users: flowData.users || defaults.users,
-        projects: flowData.projects || defaults.projects,
-        processes: flowData.processes || defaults.processes,
-        tasks: flowData.tasks || defaults.tasks,
-        processParts: flowData.processParts || defaults.processParts,
-        infoProjects: infoProjectsList
+        users,
+        projects,
+        processes,
+        tasks,
+        processParts,
+        infoProjects
       });
     } catch (error: any) {
       console.error("Redis fetch error:", error);
-      res.status(500).json({ error: "Failed to fetch data from Redis" });
+      res.status(500).json({ error: error.message || "Failed to fetch data from Redis" });
     }
   });
 

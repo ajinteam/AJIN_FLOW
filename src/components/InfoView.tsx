@@ -549,11 +549,12 @@ export const InfoView: React.FC<InfoViewProps> = ({
             }
           }
         } catch (serverErr) {
-          console.warn('Server upload notice, fallback to local cache:', serverErr);
+          console.warn('Server upload notice:', serverErr);
         }
 
+        // If server upload failed, fallback to storing base64 so mobile can still access via synced DB
         if (!savedUrl) {
-          savedUrl = `/uploads/${Date.now()}_${encodeURIComponent(file.name)}`;
+          savedUrl = fileDataUrl;
         }
 
         const newFileObj: InfoFile = {

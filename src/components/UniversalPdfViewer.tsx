@@ -139,25 +139,27 @@ export const UniversalPdfViewer: React.FC<UniversalPdfViewerProps> = ({
         }
 
         if (!loadingTask) {
-          // If URL is local upload /uploads/... or http URL
-          // Fetch arrayBuffer first for rock-solid stability across mobile & iOS
-          try {
-            const res = await fetch(url);
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const arrayBuffer = await res.arrayBuffer();
-            loadingTask = pdfjsLib.getDocument({
-              data: new Uint8Array(arrayBuffer),
-              cMapPacked: true,
-              enableXfa: false,
-            });
-          } catch (fetchErr) {
-            // Fallback directly with url
-            loadingTask = pdfjsLib.getDocument({
-              url,
-              cMapPacked: true,
-              enableXfa: false,
-            });
+          // Fetch arrayBuffer with strict validation
+          const res = await fetch(url);
+          if (!res.ok) {
+            throw new Error(`파일을 서버에서 불러올 수 없습니다 (HTTP ${res.status}). PC에서 파일을 다시 한번 업로드 해주세요.`);
           }
+
+          const contentType = res.headers.get('content-type') || '';
+          if (contentType.includes('text/html')) {
+            throw new Error('서버에 파일이 존재하지 않아 오류 페이지가 반환되었습니다. 파일이 업로드된 PC에서 다시 확인해주세요.');
+          }
+
+          const arrayBuffer = await res.arrayBuffer();
+          if (!arrayBuffer || arrayBuffer.byteLength === 0) {
+            throw new Error('PDF 파일 데이터가 비어있습니다.');
+          }
+
+          loadingTask = pdfjsLib.getDocument({
+            data: new Uint8Array(arrayBuffer),
+            cMapPacked: true,
+            enableXfa: false,
+          });
         }
 
         const doc = await loadingTask.promise;
