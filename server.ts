@@ -244,6 +244,7 @@ async function startServer() {
       const fileKey = req.params.fileKey;
       let decodedKey = fileKey;
       try { decodedKey = decodeURIComponent(fileKey); } catch {}
+      const cleanKey = cleanAndSafeFilename(decodedKey);
 
       let targetPath = path.join(uploadsDir, decodedKey);
       if (!fs.existsSync(targetPath)) {
@@ -253,22 +254,56 @@ async function startServer() {
       // Check if file exists on disk
       let exists = fs.existsSync(targetPath) && fs.statSync(targetPath).isFile();
       
-      // If not on disk, search uploads directory for partial match
+      // If not on disk, search uploads directory for matches
       if (!exists) {
         const files = fs.readdirSync(uploadsDir);
-        const match = files.find(f => f.includes(decodedKey) || f.includes(fileKey) || encodeURIComponent(f) === fileKey);
+        const match = files.find(f => 
+          f === decodedKey || 
+          f === fileKey || 
+          f.includes(cleanKey) || 
+          f.includes(decodedKey) || 
+          encodeURIComponent(f) === fileKey
+        );
         if (match) {
           targetPath = path.join(uploadsDir, match);
           exists = true;
         }
       }
 
-      // If still not on disk, auto-restore from Redis
+      // If still not on disk, check if fileKey is an infoFile ID in flowData to find its real name
+      let possibleNames: string[] = [decodedKey, fileKey, cleanKey];
+      try {
+        const flowData: any = await redis.get("ajin_flow26_Backup").catch(() => null);
+        const allFiles = (flowData?.infoProjects || []).flatMap((p: any) => p.files || []);
+        const matched = allFiles.find((f: any) => f.id === fileKey || f.id === decodedKey);
+        if (matched?.name) {
+          possibleNames.push(matched.name);
+          possibleNames.push(cleanAndSafeFilename(matched.name));
+        }
+      } catch {}
+
+      // Search disk for possible names
       if (!exists) {
-        const restored = await restoreFileFromRedis(decodedKey, path.join(uploadsDir, decodedKey));
-        if (restored) {
-          targetPath = path.join(uploadsDir, decodedKey);
-          exists = true;
+        const files = fs.readdirSync(uploadsDir);
+        for (const pname of possibleNames) {
+          const match = files.find(f => f.includes(pname) || f.endsWith(pname));
+          if (match) {
+            targetPath = path.join(uploadsDir, match);
+            exists = true;
+            break;
+          }
+        }
+      }
+
+      // If still not on disk, auto-restore from Redis using all possible keys
+      if (!exists) {
+        for (const k of possibleNames) {
+          const restored = await restoreFileFromRedis(k, path.join(uploadsDir, cleanAndSafeFilename(k)));
+          if (restored) {
+            targetPath = path.join(uploadsDir, cleanAndSafeFilename(k));
+            exists = true;
+            break;
+          }
         }
       }
 
@@ -284,6 +319,10 @@ async function startServer() {
           res.setHeader('Content-Type', 'image/jpeg');
         } else if (ext === '.png') {
           res.setHeader('Content-Type', 'image/png');
+        } else if (ext === '.webp') {
+          res.setHeader('Content-Type', 'image/webp');
+        } else {
+          res.setHeader('Content-Type', 'application/octet-stream');
         }
         res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(path.basename(targetPath))}`);
         res.setHeader('Cache-Control', 'public, max-age=86400');
@@ -305,29 +344,40 @@ async function startServer() {
       try {
         decodedFilename = decodeURIComponent(rawParam);
       } catch {}
+      const cleanName = cleanAndSafeFilename(decodedFilename);
 
-      // Try decoded filename first, then rawParam
       let targetPath = path.join(uploadsDir, decodedFilename);
       if (!fs.existsSync(targetPath)) {
         targetPath = path.join(uploadsDir, rawParam);
       }
 
-      // If not exact match, search folder for timestamp-matched or sanitized file
-      if (!fs.existsSync(targetPath)) {
+      // If not exact match, search folder for match
+      let exists = fs.existsSync(targetPath) && fs.statSync(targetPath).isFile();
+      if (!exists) {
         const files = fs.readdirSync(uploadsDir);
-        const match = files.find(f => f === decodedFilename || f === rawParam || encodeURIComponent(f) === rawParam);
+        const match = files.find(f => 
+          f === decodedFilename || 
+          f === rawParam || 
+          f.includes(cleanName) || 
+          f.includes(decodedFilename) || 
+          encodeURIComponent(f) === rawParam
+        );
         if (match) {
           targetPath = path.join(uploadsDir, match);
+          exists = true;
         }
       }
 
-      // If not on disk, restore from Redis!
-      let exists = fs.existsSync(targetPath) && fs.statSync(targetPath).isFile();
+      // If still not on disk, try auto-restoring from Redis
       if (!exists) {
-        const restored = await restoreFileFromRedis(decodedFilename, path.join(uploadsDir, decodedFilename));
-        if (restored) {
-          targetPath = path.join(uploadsDir, decodedFilename);
-          exists = true;
+        const keysToTry = [decodedFilename, rawParam, cleanName];
+        for (const k of keysToTry) {
+          const restored = await restoreFileFromRedis(k, path.join(uploadsDir, cleanName));
+          if (restored) {
+            targetPath = path.join(uploadsDir, cleanName);
+            exists = true;
+            break;
+          }
         }
       }
 
@@ -343,6 +393,10 @@ async function startServer() {
           res.setHeader('Content-Type', 'image/jpeg');
         } else if (ext === '.png') {
           res.setHeader('Content-Type', 'image/png');
+        } else if (ext === '.webp') {
+          res.setHeader('Content-Type', 'image/webp');
+        } else {
+          res.setHeader('Content-Type', 'application/octet-stream');
         }
         res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(path.basename(targetPath))}`);
         res.setHeader('Cache-Control', 'public, max-age=86400');

@@ -1410,6 +1410,10 @@ const PdfViewerWrapper: React.FC<{ file: InfoFile; initialSearchQuery?: string }
           try {
             const res = await fetch(targetUrl);
             if (res.ok) {
+              const contentType = res.headers.get('content-type') || '';
+              if (contentType.includes('text/html')) {
+                continue;
+              }
               const blob = await res.blob();
               if (blob && blob.size > 0) {
                 // Cache into IndexedDB on this device for instant zero-latency opening next time
@@ -1434,7 +1438,7 @@ const PdfViewerWrapper: React.FC<{ file: InfoFile; initialSearchQuery?: string }
         }
 
         if (isMounted) {
-          setLoadError('PDF 파일 경로를 찾을 수 없습니다.');
+          setLoadError('PDF 도면 파일을 서버에서 불러오는 중이거나 찾을 수 없습니다.');
           setIsLoading(false);
         }
       } catch (err: any) {
@@ -1511,6 +1515,33 @@ const ImageViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
         }
       }
 
+      const candidateUrls = [
+        file.dataUrl,
+        file.id ? `/api/file/${encodeURIComponent(file.id)}` : '',
+        file.name ? `/uploads/${encodeURIComponent(file.name)}` : '',
+        file.name ? `/api/file/${encodeURIComponent(file.name)}` : ''
+      ].filter(Boolean) as string[];
+
+      for (const targetUrl of candidateUrls) {
+        try {
+          const res = await fetch(targetUrl);
+          if (res.ok) {
+            const contentType = res.headers.get('content-type') || '';
+            if (contentType.includes('text/html')) continue;
+            const blob = await res.blob();
+            if (blob && blob.size > 0) {
+              if (file.id) {
+                await saveLocalFileBlob(file.id, { blob, name: file.name, type: 'image' });
+              }
+              if (isMounted) {
+                setLocalUrl(URL.createObjectURL(blob));
+                return;
+              }
+            }
+          }
+        } catch {}
+      }
+
       if (file.dataUrl && isMounted) {
         setLocalUrl(file.dataUrl);
       } else if (file.id && isMounted) {
@@ -1520,7 +1551,7 @@ const ImageViewer: React.FC<{ file: InfoFile }> = ({ file }) => {
 
     loadImage();
     return () => { isMounted = false; };
-  }, [file.id, file.dataUrl]);
+  }, [file.id, file.dataUrl, file.name]);
 
   const handleMouseDown = (e: React.MouseEvent) => {
     setIsDragging(true);
