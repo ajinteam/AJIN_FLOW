@@ -280,6 +280,57 @@ export const InfoView: React.FC<InfoViewProps> = ({
     };
   }, [isUploadModalOpen, isProjectModalOpen, viewerProject]);
 
+  // Auto-sync files from local IndexedDB cache to cloud Redis for cross-device availability
+  useEffect(() => {
+    let isMounted = true;
+    const syncLocalFilesToCloud = async () => {
+      if (!infoProjects || infoProjects.length === 0) return;
+      for (const project of infoProjects) {
+        for (const file of (project.files || [])) {
+          if (!file.id || !isMounted) continue;
+          try {
+            const cached = await getLocalFileBlob(file.id);
+            if (cached && (cached.blob || cached.dataUrl)) {
+              // Quick check if server has it
+              const checkRes = await fetch(`/api/file/${encodeURIComponent(file.id)}`, { method: 'HEAD' }).catch(() => null);
+              if (!checkRes || !checkRes.ok || checkRes.headers.get('content-type')?.includes('text/html')) {
+                console.log(`Auto-syncing file to cloud storage: ${file.name} (${file.id})`);
+                let blobToUpload = cached.blob;
+                if (!blobToUpload && cached.dataUrl) {
+                  const r = await fetch(cached.dataUrl);
+                  blobToUpload = await r.blob();
+                }
+                if (blobToUpload && isMounted) {
+                  const fd = new FormData();
+                  fd.append('file', blobToUpload, file.name);
+                  await fetch(`/api/upload-file?fileId=${encodeURIComponent(file.id)}`, {
+                    method: 'POST',
+                    headers: {
+                      'X-File-Id': encodeURIComponent(file.id),
+                      'X-File-Name': encodeURIComponent(file.name)
+                    },
+                    body: fd
+                  });
+                }
+              }
+            }
+          } catch (e) {
+            console.warn('Auto sync local file error:', e);
+          }
+        }
+      }
+    };
+
+    const timer = setTimeout(() => {
+      syncLocalFilesToCloud();
+    }, 1500);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+    };
+  }, [infoProjects]);
+
   const openViewer = (project: InfoProject, fileIdx: number = 0) => {
     try {
       window.history.pushState({ modal: 'info-viewer' }, '');

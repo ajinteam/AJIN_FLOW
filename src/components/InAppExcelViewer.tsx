@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { getLocalFileBlob } from '../lib/storage';
+import { getLocalFileBlob, saveLocalFileBlob } from '../lib/storage';
 
 function cn(...inputs: any[]) {
   return twMerge(clsx(inputs));
@@ -78,29 +78,56 @@ export const InAppExcelViewer: React.FC<InAppExcelViewerProps> = ({
           }
         }
 
-        // 2. Try provided dataUrl
-        if (!arrayBuffer && dataUrl) {
-          if (dataUrl.startsWith('data:')) {
-            const res = await fetch(dataUrl);
-            arrayBuffer = await res.arrayBuffer();
-          } else {
-            // Server URL fetch with robust response validation
-            const res = await fetch(dataUrl);
-            if (!res.ok) {
-              throw new Error(`파일을 서버에서 불러올 수 없습니다 (HTTP ${res.status}). PC에서 파일을 다시 한번 업로드 해주세요.`);
-            }
+        // 2. Try remote endpoints (resolves from server disk or auto-restores from Redis)
+        if (!arrayBuffer) {
+          const candidateUrls = [
+            dataUrl,
+            fileId ? `/api/file/${encodeURIComponent(fileId)}` : '',
+            fileName ? `/api/file/${encodeURIComponent(fileName)}` : '',
+            fileName ? `/uploads/${encodeURIComponent(fileName)}` : ''
+          ].filter(Boolean) as string[];
 
-            const contentType = res.headers.get('content-type') || '';
-            if (contentType.includes('text/html')) {
-              throw new Error('서버에 파일이 존재하지 않아 오류 페이지가 반환되었습니다. 파일이 업로드된 기기(PC)에서 다시 한번 확인해주세요.');
-            }
+          for (const targetUrl of candidateUrls) {
+            try {
+              if (targetUrl.startsWith('data:')) {
+                const res = await fetch(targetUrl);
+                arrayBuffer = await res.arrayBuffer();
+                break;
+              }
 
-            arrayBuffer = await res.arrayBuffer();
+              const res = await fetch(targetUrl);
+              if (res.ok) {
+                const contentType = res.headers.get('content-type') || '';
+                if (!contentType.includes('text/html')) {
+                  const buf = await res.arrayBuffer();
+                  if (buf && buf.byteLength > 0) {
+                    arrayBuffer = buf;
+
+                    // Cache locally for instant opening on this device
+                    if (fileId) {
+                      try {
+                        const blob = new Blob([buf], {
+                          type: fileName.endsWith('.xls') ? 'application/vnd.ms-excel' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                        });
+                        await saveLocalFileBlob(fileId, {
+                          blob,
+                          name: fileName,
+                          type: 'excel'
+                        });
+                      } catch {}
+                    }
+                    break;
+                  }
+                }
+              }
+            } catch (fetchErr) {
+              console.warn(`Excel candidate fetch failed for ${targetUrl}:`, fetchErr);
+            }
           }
         }
 
         if (!arrayBuffer || arrayBuffer.byteLength === 0) {
-          throw new Error('엑셀 파일 데이터를 찾을 수 없습니다.');
+          throw new Error('엑셀 파일 데이터를 서버에서 불러오는 중이거나 찾을 수 없습니다. PC에서 파일을 열람하거나 재동기화 후 확인해주세요.');
         }
 
         // 3. Parse with SheetJS (Zero download, client-side memory parse)

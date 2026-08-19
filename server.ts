@@ -38,7 +38,7 @@ async function syncFileToRedis(fileKey: string, filePath: string, originalName: 
     if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) return;
     if (!fs.existsSync(filePath)) return;
     const fileBuffer = await fs.promises.readFile(filePath);
-    const CHUNK_SIZE = 500 * 1024; // 500KB chunk size
+    const CHUNK_SIZE = 450 * 1024; // 450KB chunk size
     const totalChunks = Math.ceil(fileBuffer.length / CHUNK_SIZE);
 
     const meta = {
@@ -51,26 +51,36 @@ async function syncFileToRedis(fileKey: string, filePath: string, originalName: 
       updatedAt: new Date().toISOString()
     };
 
-    // Save metadata under both fileKey and saved filename
+    // Save metadata under fileKey, saved filename, and clean original name
     await Promise.all([
       redis.set(`file_meta:${fileKey}`, meta),
-      redis.set(`file_meta:${path.basename(filePath)}`, meta)
+      redis.set(`file_meta:${path.basename(filePath)}`, meta),
+      redis.set(`file_meta:${originalName}`, meta)
     ]);
 
-    // Save chunks
-    const chunkPromises = [];
-    for (let i = 0; i < totalChunks; i++) {
-      const start = i * CHUNK_SIZE;
-      const end = Math.min(start + CHUNK_SIZE, fileBuffer.length);
-      const chunkData = fileBuffer.subarray(start, end).toString('base64');
-      chunkPromises.push(redis.set(`file_chunk:${fileKey}:${i}`, chunkData));
-      chunkPromises.push(redis.set(`file_chunk:${path.basename(filePath)}:${i}`, chunkData));
+    // Save chunks in batches of 10 for maximum throughput and reliability
+    for (let i = 0; i < totalChunks; i += 10) {
+      const batch = [];
+      for (let j = i; j < Math.min(i + 10, totalChunks); j++) {
+        const start = j * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, fileBuffer.length);
+        const chunkData = sampleSubarray(fileBuffer, start, end).toString('base64');
+        batch.push(redis.set(`file_chunk:${fileKey}:${j}`, chunkData));
+        batch.push(redis.set(`file_chunk:${path.basename(filePath)}:${j}`, chunkData));
+        if (originalName) {
+          batch.push(redis.set(`file_chunk:${originalName}:${j}`, chunkData));
+        }
+      }
+      await Promise.all(batch);
     }
-    await Promise.all(chunkPromises);
-    console.log(`Successfully synced file to Redis: ${fileKey} (${fileBuffer.length} bytes, ${totalChunks} chunks)`);
+    console.log(`Successfully synced file to Redis: ${fileKey} / ${originalName} (${fileBuffer.length} bytes, ${totalChunks} chunks)`);
   } catch (err) {
     console.warn(`Failed to sync file to Redis (${fileKey}):`, err);
   }
+}
+
+function sampleSubarray(buf: Buffer, start: number, end: number): Buffer {
+  return buf.subarray(start, end);
 }
 
 // Restore missing file from Upstash Redis chunks to local disk
@@ -78,7 +88,7 @@ async function restoreFileFromRedis(fileKey: string, targetPath: string): Promis
   try {
     if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) return false;
     
-    // Look up meta by exact fileKey or basename
+    // Look up meta by exact fileKey or basename or decoded name
     let meta: any = await redis.get(`file_meta:${fileKey}`).catch(() => null);
     if (!meta) {
       meta = await redis.get(`file_meta:${path.basename(fileKey)}`).catch(() => null);
@@ -91,10 +101,16 @@ async function restoreFileFromRedis(fileKey: string, targetPath: string): Promis
     }
     if (!meta || !meta.chunks) return false;
 
-    // Fetch all chunks in parallel
     const effectiveKey = meta.key || fileKey;
     const chunkKeys = Array.from({ length: meta.chunks }, (_, i) => `file_chunk:${effectiveKey}:${i}`);
-    const chunksData: any[] = await Promise.all(chunkKeys.map(k => redis.get(k)));
+    
+    // Read chunks in batches of 15
+    const chunksData: any[] = [];
+    for (let i = 0; i < chunkKeys.length; i += 15) {
+      const batchKeys = chunkKeys.slice(i, i + 15);
+      const batchRes = await Promise.all(batchKeys.map(k => redis.get(k)));
+      chunksData.push(...batchRes);
+    }
 
     const buffers: Buffer[] = [];
     for (const chunkBase64 of chunksData) {
@@ -151,14 +167,14 @@ async function startServer() {
       const writeStream = fs.createWriteStream(filePath);
       req.pipe(writeStream);
 
-      writeStream.on('finish', () => {
+      writeStream.on('finish', async () => {
         try {
           const stats = fs.statSync(filePath);
           const fileUrl = `/uploads/${encodeURIComponent(savedFileName)}`;
           
-          // Background sync to Redis for cross-device availability
-          syncFileToRedis(fileId, filePath, cleanName, req.headers['content-type'] || 'application/octet-stream');
-          syncFileToRedis(savedFileName, filePath, cleanName, req.headers['content-type'] || 'application/octet-stream');
+          // Await Redis chunk sync so data is guaranteed to be saved in cloud storage before returning
+          await syncFileToRedis(fileId, filePath, cleanName, req.headers['content-type'] || 'application/octet-stream');
+          await syncFileToRedis(savedFileName, filePath, cleanName, req.headers['content-type'] || 'application/octet-stream');
 
           return res.json({
             success: true,
@@ -357,9 +373,9 @@ async function startServer() {
         const fileUrl = `/uploads/${encodeURIComponent(req.file.filename)}`;
         const filePath = path.join(uploadsDir, req.file.filename);
 
-        // Background sync to Redis for cross-device persistence
-        syncFileToRedis(fileId, filePath, cleanName, req.file.mimetype);
-        syncFileToRedis(req.file.filename, filePath, cleanName, req.file.mimetype);
+        // Await sync to Redis before returning so cloud persistence is guaranteed
+        await syncFileToRedis(fileId, filePath, cleanName, req.file.mimetype);
+        await syncFileToRedis(req.file.filename, filePath, cleanName, req.file.mimetype);
 
         return res.json({
           success: true,
@@ -383,9 +399,9 @@ async function startServer() {
 
         await fs.promises.writeFile(filePath, buffer);
 
-        // Background sync to Redis
-        syncFileToRedis(fileId, filePath, cleanName, 'application/octet-stream');
-        syncFileToRedis(savedFileName, filePath, cleanName, 'application/octet-stream');
+        // Await sync to Redis
+        await syncFileToRedis(fileId, filePath, cleanName, 'application/octet-stream');
+        await syncFileToRedis(savedFileName, filePath, cleanName, 'application/octet-stream');
 
         const fileUrl = `/uploads/${encodeURIComponent(savedFileName)}`;
         return res.json({

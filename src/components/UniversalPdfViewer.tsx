@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 // Import worker directly via Vite's URL loader for 100% reliable zero-network-fail worker loading
+// @ts-ignore
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { 
   ZoomIn, 
