@@ -49,17 +49,66 @@ export async function getLocalFileBlob(id: string): Promise<any | null> {
   }
 }
 
-export async function deleteLocalFileBlob(id: string): Promise<void> {
+export async function getAllLocalFileBlobs(): Promise<Array<{ id: string; blob?: Blob; dataUrl?: string; name: string; type: string }>> {
   try {
     const db = await openDB();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_FILES, 'readwrite');
+      const tx = db.transaction(STORE_FILES, 'readonly');
       const store = tx.objectStore(STORE_FILES);
-      store.delete(id);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
+      const req = store.getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
     });
   } catch (err) {
-    console.warn('IndexedDB delete notice:', err);
+    console.warn('IndexedDB getAll notice:', err);
+    return [];
   }
 }
+
+// Upload a single blob to the server / Redis so mobile devices can access it
+export async function uploadBlobToCloud(id: string, name: string, blob: Blob): Promise<boolean> {
+  try {
+    const safeName = encodeURIComponent(name);
+    const res = await fetch(`/api/upload-raw?filename=${safeName}&fileId=${encodeURIComponent(id)}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': blob.type || 'application/octet-stream',
+        'x-file-id': id,
+        'x-file-name': safeName
+      },
+      body: blob
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn(`Failed to sync blob ${name} to cloud:`, err);
+    return false;
+  }
+}
+
+// Auto-sync all locally stored files in IndexedDB to the cloud
+export async function syncAllLocalFilesToCloud(): Promise<{ total: number; synced: number }> {
+  try {
+    const allFiles = await getAllLocalFileBlobs();
+    let synced = 0;
+    for (const item of allFiles) {
+      if (item.blob && item.blob.size > 0) {
+        const ok = await uploadBlobToCloud(item.id, item.name, item.blob);
+        if (ok) synced++;
+      } else if (item.dataUrl && item.dataUrl.startsWith('data:')) {
+        try {
+          const res = await fetch(item.dataUrl);
+          const blob = await res.blob();
+          if (blob && blob.size > 0) {
+            const ok = await uploadBlobToCloud(item.id, item.name, blob);
+            if (ok) synced++;
+          }
+        } catch {}
+      }
+    }
+    return { total: allFiles.length, synced };
+  } catch (err) {
+    console.warn('Sync all local files error:', err);
+    return { total: 0, synced: 0 };
+  }
+}
+
