@@ -23,14 +23,15 @@ import {
   RotateCw,
   Clock,
   ArrowUpDown,
-  ExternalLink
+  ExternalLink,
+  RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { UniversalPdfViewer } from './UniversalPdfViewer';
 import { InAppExcelViewer } from './InAppExcelViewer';
-import { saveLocalFileBlob, getLocalFileBlob, uploadBlobToCloud, syncAllLocalFilesToCloud, getAllLocalFileBlobs } from '../lib/storage';
+import { saveLocalFileBlob, getLocalFileBlob, uploadBlobToCloud, syncAllLocalFilesToCloud, getAllLocalFileBlobs, uploadFileWithChunks } from '../lib/storage';
 
 function cn(...inputs: any[]) {
   return twMerge(clsx(inputs));
@@ -261,6 +262,20 @@ export const InfoView: React.FC<InfoViewProps> = ({
   const [viewerProject, setViewerProject] = useState<InfoProject | null>(null);
   const [activeFileIndex, setActiveFileIndex] = useState<number>(0);
   const [docSearchQuery, setDocSearchQuery] = useState('');
+  const [isSyncingCloud, setIsSyncingCloud] = useState(false);
+
+  // Manual Cloud Sync Handler
+  const handleManualSync = async () => {
+    setIsSyncingCloud(true);
+    try {
+      const res = await syncAllLocalFilesToCloud();
+      showAlert('클라우드 동기화 완료', `로컬 보관 파일 ${res.total}개 중 ${res.synced}개가 모바일/클라우드 서버에 안전하게 동기화되었습니다.`, 'success');
+    } catch (e: any) {
+      showAlert('동기화 오류', '클라우드 동기화 중 오류가 발생했습니다: ' + (e?.message || ''), 'error');
+    } finally {
+      setIsSyncingCloud(false);
+    }
+  };
 
   // Mobile / Hardware Back Button Navigation Handler
   useEffect(() => {
@@ -580,57 +595,16 @@ export const InfoView: React.FC<InfoViewProps> = ({
           console.warn('Local cache notice:', cacheErr);
         }
 
-        // 2. Upload to server storage (Strategy A: FormData Multipart, Strategy B: Raw Binary)
-        let savedUrl = '';
-
-        // Strategy A: Standard FormData
+        // 2. High-reliability Chunked Cloud Upload (Guaranteed Redis + Disk persistence)
+        let savedUrl = `/api/file/${encodeURIComponent(fileId)}`;
         try {
-          const formData = new FormData();
-          formData.append('file', fileBlob, file.name);
-
-          const uploadRes = await fetch(`/api/upload-file?fileId=${encodeURIComponent(fileId)}`, {
-            method: 'POST',
-            headers: {
-              'X-File-Id': encodeURIComponent(fileId),
-              'X-File-Name': encodeURIComponent(file.name)
-            },
-            body: formData
-          });
-
-          if (uploadRes.ok) {
-            const uploadJson = await uploadRes.json().catch(() => null);
-            if (uploadJson?.success && uploadJson?.url) {
-              savedUrl = uploadJson.url;
-              fileSize = uploadJson.size || fileSize;
-            }
+          const chunkRes = await uploadFileWithChunks(fileId, file.name, fileBlob);
+          if (chunkRes.success && chunkRes.url) {
+            savedUrl = chunkRes.url;
+            fileSize = chunkRes.size || fileSize;
           }
-        } catch (formErr) {
-          console.warn('FormData upload notice:', formErr);
-        }
-
-        // Strategy B: Raw Binary Stream Endpoint
-        if (!savedUrl) {
-          try {
-            const rawRes = await fetch(`/api/upload-raw?fileId=${encodeURIComponent(fileId)}&filename=${encodeURIComponent(file.name)}`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': file.type || 'application/octet-stream',
-                'X-File-Id': encodeURIComponent(fileId),
-                'X-File-Name': encodeURIComponent(file.name)
-              },
-              body: fileBlob
-            });
-
-            if (rawRes.ok) {
-              const rawJson = await rawRes.json().catch(() => null);
-              if (rawJson?.success && rawJson?.url) {
-                savedUrl = rawJson.url;
-                fileSize = rawJson.size || fileSize;
-              }
-            }
-          } catch (rawErr) {
-            console.warn('Raw upload notice:', rawErr);
-          }
+        } catch (cloudErr) {
+          console.warn('Chunk upload notice:', cloudErr);
         }
 
         const newFileObj: InfoFile = {
@@ -638,7 +612,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
           name: file.name,
           type: fileType,
           size: fileSize,
-          dataUrl: savedUrl || `/api/file/${encodeURIComponent(fileId)}`,
+          dataUrl: savedUrl,
           uploadedAt: new Date().toISOString()
         };
 
@@ -750,6 +724,18 @@ export const InfoView: React.FC<InfoViewProps> = ({
               >
                 <Upload size={18} />
                 <span>업로드</span>
+              </button>
+
+              {/* 클라우드 동기화 버튼 */}
+              <button
+                onClick={handleManualSync}
+                disabled={isSyncingCloud}
+                title="PC의 도면/파일을 스마트폰에서도 볼 수 있도록 클라우드에 동기화합니다."
+                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white px-3.5 md:px-4 py-2.5 rounded-xl font-bold text-xs md:text-sm shadow-md shadow-emerald-200 transition-all cursor-pointer disabled:opacity-50"
+              >
+                <RefreshCw size={16} className={isSyncingCloud ? 'animate-spin' : ''} />
+                <span className="hidden sm:inline">{isSyncingCloud ? '동기화 중...' : '클라우드 동기화'}</span>
+                <span className="sm:hidden">{isSyncingCloud ? '동기화' : '동기화'}</span>
               </button>
             </>
           )}

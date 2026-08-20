@@ -38,14 +38,18 @@ async function syncFileToRedis(fileKey: string, filePath: string, originalName: 
     if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) return;
     if (!fs.existsSync(filePath)) return;
     const fileBuffer = await fs.promises.readFile(filePath);
+    if (fileBuffer.length === 0) return;
+
     const CHUNK_SIZE = 450 * 1024; // 450KB chunk size
     const totalChunks = Math.ceil(fileBuffer.length / CHUNK_SIZE);
+    const cleanOrig = cleanAndSafeFilename(originalName);
+    const savedBasename = path.basename(filePath);
 
     const meta = {
       key: fileKey,
-      filename: path.basename(filePath),
-      originalName,
-      mimeType,
+      filename: savedBasename,
+      originalName: cleanOrig,
+      mimeType: mimeType || 'application/octet-stream',
       size: fileBuffer.length,
       chunks: totalChunks,
       updatedAt: new Date().toISOString()
@@ -54,26 +58,22 @@ async function syncFileToRedis(fileKey: string, filePath: string, originalName: 
     // Save metadata under fileKey, saved filename, and clean original name
     await Promise.all([
       redis.set(`file_meta:${fileKey}`, meta),
-      redis.set(`file_meta:${path.basename(filePath)}`, meta),
-      redis.set(`file_meta:${originalName}`, meta)
+      redis.set(`file_meta:${savedBasename}`, meta),
+      redis.set(`file_meta:${cleanOrig}`, meta)
     ]);
 
-    // Save chunks in batches of 10 for maximum throughput and reliability
+    // Save chunks under primary fileKey
     for (let i = 0; i < totalChunks; i += 10) {
       const batch = [];
       for (let j = i; j < Math.min(i + 10, totalChunks); j++) {
         const start = j * CHUNK_SIZE;
         const end = Math.min(start + CHUNK_SIZE, fileBuffer.length);
-        const chunkData = sampleSubarray(fileBuffer, start, end).toString('base64');
+        const chunkData = fileBuffer.subarray(start, end).toString('base64');
         batch.push(redis.set(`file_chunk:${fileKey}:${j}`, chunkData));
-        batch.push(redis.set(`file_chunk:${path.basename(filePath)}:${j}`, chunkData));
-        if (originalName) {
-          batch.push(redis.set(`file_chunk:${originalName}:${j}`, chunkData));
-        }
       }
       await Promise.all(batch);
     }
-    console.log(`Successfully synced file to Redis: ${fileKey} / ${originalName} (${fileBuffer.length} bytes, ${totalChunks} chunks)`);
+    console.log(`Successfully synced file to Redis: ${fileKey} (${fileBuffer.length} bytes, ${totalChunks} chunks)`);
   } catch (err) {
     console.warn(`Failed to sync file to Redis (${fileKey}):`, err);
   }
@@ -252,9 +252,77 @@ async function startServer() {
     }
   });
 
-  // Body parser limits for JSON and form requests
+  // Body parser limits for JSON and form requests (must be before JSON endpoints)
   app.use(express.json({ limit: '100mb' }));
   app.use(express.urlencoded({ extended: true, limit: '100mb' }));
+
+  // 1-B. High-reliability Chunked Upload Endpoint
+  app.post("/api/upload-chunk", async (req, res) => {
+    try {
+      const { fileId, chunkIndex, totalChunks, filename, mimeType, dataBase64, totalSize } = req.body || {};
+      if (!fileId || chunkIndex === undefined || !totalChunks || !dataBase64) {
+        return res.status(400).json({ success: false, error: "잘못된 청크 업로드 매개변수입니다." });
+      }
+
+      // Store chunk in Redis
+      await redis.set(`file_chunk:${fileId}:${chunkIndex}`, dataBase64);
+
+      // If last chunk, finalize file
+      if (chunkIndex === totalChunks - 1) {
+        const cleanOrig = cleanAndSafeFilename(filename || 'file');
+        const timestamp = Date.now();
+        const savedFileName = `${timestamp}_${cleanOrig}`;
+        const filePath = path.join(uploadsDir, savedFileName);
+
+        // Fetch all chunks and assemble
+        const chunkKeys = Array.from({ length: totalChunks }, (_, i) => `file_chunk:${fileId}:${i}`);
+        const chunksData: any[] = [];
+        for (let i = 0; i < chunkKeys.length; i += 15) {
+          const batch = chunkKeys.slice(i, i + 15);
+          const resArr = await Promise.all(batch.map(k => redis.get(k)));
+          chunksData.push(...resArr);
+        }
+
+        const buffers = chunksData.map(c => Buffer.from(c || '', 'base64'));
+        const fullBuffer = Buffer.concat(buffers);
+
+        await fs.promises.writeFile(filePath, fullBuffer);
+
+        const meta = {
+          key: fileId,
+          filename: savedFileName,
+          originalName: cleanOrig,
+          mimeType: mimeType || 'application/octet-stream',
+          size: fullBuffer.length,
+          chunks: totalChunks,
+          updatedAt: new Date().toISOString()
+        };
+
+        await Promise.all([
+          redis.set(`file_meta:${fileId}`, meta),
+          redis.set(`file_meta:${savedFileName}`, meta),
+          redis.set(`file_meta:${cleanOrig}`, meta)
+        ]);
+
+        console.log(`Finalized chunked upload: ${cleanOrig} (${fullBuffer.length} bytes, ${totalChunks} chunks)`);
+
+        return res.json({
+          success: true,
+          done: true,
+          url: `/uploads/${encodeURIComponent(savedFileName)}`,
+          fileId,
+          filename: savedFileName,
+          originalName: cleanOrig,
+          size: fullBuffer.length
+        });
+      }
+
+      return res.json({ success: true, done: false, chunkIndex });
+    } catch (err: any) {
+      console.error("upload-chunk error:", err);
+      return res.status(500).json({ success: false, error: err.message || "청크 업로드 오류" });
+    }
+  });
 
   // Multer configuration for streaming direct binary uploads up to 100MB
   const storage = multer.diskStorage({
@@ -354,23 +422,34 @@ async function startServer() {
       }
 
       if (exists) {
-        const ext = path.extname(targetPath).toLowerCase();
-        if (ext === '.pdf') {
-          res.setHeader('Content-Type', 'application/pdf');
-        } else if (ext === '.xlsx') {
-          res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        } else if (ext === '.xls') {
-          res.setHeader('Content-Type', 'application/vnd.ms-excel');
-        } else if (['.jpg', '.jpeg'].includes(ext)) {
-          res.setHeader('Content-Type', 'image/jpeg');
-        } else if (ext === '.png') {
-          res.setHeader('Content-Type', 'image/png');
-        } else if (ext === '.webp') {
-          res.setHeader('Content-Type', 'image/webp');
-        } else {
-          res.setHeader('Content-Type', 'application/octet-stream');
+        let mimeType = '';
+        try {
+          const meta: any = await redis.get(`file_meta:${fileKey}`).catch(() => null);
+          if (meta?.mimeType && meta.mimeType !== 'application/octet-stream') {
+            mimeType = meta.mimeType;
+          }
+        } catch {}
+
+        if (!mimeType) {
+          const ext = path.extname(targetPath).toLowerCase();
+          if (ext === '.pdf' || targetPath.endsWith('.pdf')) {
+            mimeType = 'application/pdf';
+          } else if (ext === '.xlsx' || targetPath.endsWith('.xlsx')) {
+            mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+          } else if (ext === '.xls' || targetPath.endsWith('.xls')) {
+            mimeType = 'application/vnd.ms-excel';
+          } else if (['.jpg', '.jpeg'].some(e => targetPath.endsWith(e))) {
+            mimeType = 'image/jpeg';
+          } else if (ext === '.png' || targetPath.endsWith('.png')) {
+            mimeType = 'image/png';
+          } else if (ext === '.webp' || targetPath.endsWith('.webp')) {
+            mimeType = 'image/webp';
+          } else {
+            mimeType = 'application/octet-stream';
+          }
         }
-        
+
+        res.setHeader('Content-Type', mimeType);
         const stat = fs.statSync(targetPath);
         res.setHeader('Content-Length', stat.size);
         res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(path.basename(targetPath))}`);
