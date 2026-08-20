@@ -207,7 +207,7 @@ export const InAppExcelViewer: React.FC<InAppExcelViewerProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [fileId, dataUrl]);
+  }, [fileId, dataUrl, fileName]);
 
   const currentSheet = sheets[activeSheetIdx];
 

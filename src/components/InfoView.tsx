@@ -1471,7 +1471,55 @@ const PdfViewerWrapper: React.FC<{ file: InfoFile; initialSearchQuery?: string }
       <div className="flex-1 flex flex-col items-center justify-center p-8 bg-slate-900 text-center">
         <FileText size={48} className="text-rose-400 mb-3" />
         <h4 className="text-base font-bold text-white mb-1">도면 파일을 열 수 없습니다</h4>
-        <p className="text-xs text-slate-400 mb-4">{loadError || '파일 데이터가 유실되었거나 접근할 수 없습니다.'}</p>
+        <p className="text-xs text-slate-400 mb-4 max-w-sm">{loadError || '파일 데이터가 유실되었거나 접근할 수 없습니다.'}</p>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              setIsLoading(true);
+              setLoadError(null);
+              // Force re-fetch
+              const candidateUrls = [
+                file.dataUrl,
+                file.id ? `/api/file/${encodeURIComponent(file.id)}` : '',
+                file.name ? `/uploads/${encodeURIComponent(file.name)}` : '',
+                file.name ? `/api/file/${encodeURIComponent(file.name)}` : ''
+              ].filter(Boolean) as string[];
+
+              (async () => {
+                for (const targetUrl of candidateUrls) {
+                  try {
+                    const res = await fetch(targetUrl);
+                    if (res.ok && !(res.headers.get('content-type') || '').includes('text/html')) {
+                      const blob = await res.blob();
+                      if (blob && blob.size > 0) {
+                        if (file.id) {
+                          await saveLocalFileBlob(file.id, { blob, name: file.name, type: 'pdf' });
+                        }
+                        setResolvedUrl(URL.createObjectURL(blob));
+                        setIsLoading(false);
+                        return;
+                      }
+                    }
+                  } catch {}
+                }
+                setLoadError('서버에서 파일을 찾을 수 없습니다. PC에서 원본 파일을 열람하거나 재동기화 후 확인해주세요.');
+                setIsLoading(false);
+              })();
+            }}
+            className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm"
+          >
+            다시 시도
+          </button>
+          {resolvedUrl && (
+            <a
+              href={resolvedUrl}
+              download={file.name}
+              className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold transition-all"
+            >
+              다운로드
+            </a>
+          )}
+        </div>
       </div>
     );
   }

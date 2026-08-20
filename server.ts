@@ -83,12 +83,21 @@ function sampleSubarray(buf: Buffer, start: number, end: number): Buffer {
   return buf.subarray(start, end);
 }
 
+// Helper to normalize strings for robust fuzzy comparison (removes spaces, underscores, timestamps, case)
+function normalizeName(str: string): string {
+  if (!str) return '';
+  return str
+    .replace(/^\d+[_]/, '') // remove timestamp prefix
+    .replace(/[\s\-_()[\]]/g, '') // remove spaces, dashes, brackets
+    .toLowerCase();
+}
+
 // Restore missing file from Upstash Redis chunks to local disk
 async function restoreFileFromRedis(fileKey: string, targetPath: string): Promise<boolean> {
   try {
     if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) return false;
     
-    // Look up meta by exact fileKey or basename or decoded name
+    // 1. Direct lookups
     let meta: any = await redis.get(`file_meta:${fileKey}`).catch(() => null);
     if (!meta) {
       meta = await redis.get(`file_meta:${path.basename(fileKey)}`).catch(() => null);
@@ -97,11 +106,46 @@ async function restoreFileFromRedis(fileKey: string, targetPath: string): Promis
       try {
         const decoded = decodeURIComponent(fileKey);
         meta = await redis.get(`file_meta:${decoded}`).catch(() => null);
+        if (!meta) {
+          meta = await redis.get(`file_meta:${cleanAndSafeFilename(decoded)}`).catch(() => null);
+        }
       } catch {}
     }
+
+    // 2. Intelligent fuzzy match if direct lookup failed
+    if (!meta || !meta.chunks) {
+      try {
+        const allMetaKeys = await redis.keys("file_meta:*");
+        const normKey = normalizeName(fileKey);
+
+        for (const mk of allMetaKeys) {
+          const candidateMeta: any = await redis.get(mk);
+          if (!candidateMeta || !candidateMeta.chunks) continue;
+
+          const normCandidateFilename = normalizeName(candidateMeta.filename || '');
+          const normCandidateOriginal = normalizeName(candidateMeta.originalName || '');
+          const normMetaKey = normalizeName(mk.replace('file_meta:', ''));
+
+          if (
+            normKey === normCandidateFilename ||
+            normKey === normCandidateOriginal ||
+            normKey === normMetaKey ||
+            (normKey.length > 5 && normCandidateOriginal.includes(normKey)) ||
+            (normCandidateOriginal.length > 5 && normKey.includes(normCandidateOriginal))
+          ) {
+            meta = candidateMeta;
+            console.log(`Fuzzy matched fileKey "${fileKey}" to Redis meta "${candidateMeta.filename || candidateMeta.originalName}"`);
+            break;
+          }
+        }
+      } catch (fuzzyErr) {
+        console.warn("Fuzzy meta search error:", fuzzyErr);
+      }
+    }
+
     if (!meta || !meta.chunks) return false;
 
-    const effectiveKey = meta.key || fileKey;
+    const effectiveKey = meta.key || meta.filename || fileKey;
     const chunkKeys = Array.from({ length: meta.chunks }, (_, i) => `file_chunk:${effectiveKey}:${i}`);
     
     // Read chunks in batches of 15
@@ -119,6 +163,8 @@ async function restoreFileFromRedis(fileKey: string, targetPath: string): Promis
     }
 
     const fullBuffer = Buffer.concat(buffers);
+    if (fullBuffer.length === 0) return false;
+
     await fs.promises.writeFile(targetPath, fullBuffer);
     console.log(`Restored missing file from Redis to disk: ${targetPath} (${fullBuffer.length} bytes)`);
     return true;
@@ -324,9 +370,18 @@ async function startServer() {
         } else {
           res.setHeader('Content-Type', 'application/octet-stream');
         }
+        
+        const stat = fs.statSync(targetPath);
+        res.setHeader('Content-Length', stat.size);
         res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(path.basename(targetPath))}`);
         res.setHeader('Cache-Control', 'public, max-age=86400');
-        return res.sendFile(targetPath);
+        
+        const readStream = fs.createReadStream(targetPath);
+        readStream.on('error', (err) => {
+          console.error("Stream read error:", err);
+          if (!res.headersSent) res.status(500).json({ error: "File read error" });
+        });
+        return readStream.pipe(res);
       }
 
       return res.status(404).json({ error: '파일을 찾을 수 없습니다.' });
@@ -485,7 +540,7 @@ async function startServer() {
   app.put("/api/upload", handleUploadMiddleware, handleFileUploadRoute);
 
   // API routes for data fetching & saving
-  app.get("/api/data", async (req, res) => {
+  app.get(["/api/data", "/api/backup"], async (req, res) => {
     if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) {
       return res.status(500).json({ 
         error: "Redis configuration missing. Please set KV_REST_API_URL and KV_REST_API_TOKEN in settings." 
@@ -563,7 +618,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/data", async (req, res) => {
+  app.post(["/api/data", "/api/backup"], async (req, res) => {
     if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) {
       return res.status(500).json({ 
         error: "Redis configuration missing. Please set KV_REST_API_URL and KV_REST_API_TOKEN in settings." 
