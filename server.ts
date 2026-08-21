@@ -672,7 +672,10 @@ async function startServer() {
         } else if (typeof infoDataRaw === 'object') {
           infoProjectsList = infoDataRaw.infoProjects || [];
         }
-      } else if (flowData.infoProjects && Array.isArray(flowData.infoProjects)) {
+      }
+
+      // If infoProjectsList is empty, fall back to flowData.infoProjects
+      if ((!infoProjectsList || infoProjectsList.length === 0) && flowData.infoProjects && Array.isArray(flowData.infoProjects)) {
         infoProjectsList = flowData.infoProjects;
       }
 
@@ -681,7 +684,7 @@ async function startServer() {
       const processes = flowData.processes || defaults.processes;
       const tasks = flowData.tasks || defaults.tasks;
       const processParts = flowData.processParts || defaults.processParts;
-      const infoProjects = infoProjectsList || defaults.infoProjects;
+      const infoProjects = (infoProjectsList && infoProjectsList.length > 0) ? infoProjectsList : (flowData.infoProjects || defaults.infoProjects);
 
       res.json({
         users,

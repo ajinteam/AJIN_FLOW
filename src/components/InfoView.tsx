@@ -31,7 +31,7 @@ import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { UniversalPdfViewer } from './UniversalPdfViewer';
 import { InAppExcelViewer } from './InAppExcelViewer';
-import { saveLocalFileBlob, getLocalFileBlob, uploadBlobToCloud, syncAllLocalFilesToCloud, getAllLocalFileBlobs, uploadFileWithChunks } from '../lib/storage';
+import { saveLocalFileBlob, getLocalFileBlob, uploadBlobToCloud, uploadBlobDirect, syncAllLocalFilesToCloud, getAllLocalFileBlobs } from '../lib/storage';
 
 function cn(...inputs: any[]) {
   return twMerge(clsx(inputs));
@@ -263,17 +263,30 @@ export const InfoView: React.FC<InfoViewProps> = ({
   const [activeFileIndex, setActiveFileIndex] = useState<number>(0);
   const [docSearchQuery, setDocSearchQuery] = useState('');
   const [isSyncingCloud, setIsSyncingCloud] = useState(false);
+  const [syncProgress, setSyncProgress] = useState<{ current: number; total: number; currentFileName: string; percentage: number } | null>(null);
 
-  // Manual Cloud Sync Handler
+  // Manual Cloud Sync Handler with Live Progress
   const handleManualSync = async () => {
     setIsSyncingCloud(true);
+    setSyncProgress(null);
     try {
-      const res = await syncAllLocalFilesToCloud();
-      showAlert('클라우드 동기화 완료', `로컬 보관 파일 ${res.total}개 중 ${res.synced}개가 모바일/클라우드 서버에 안전하게 동기화되었습니다.`, 'success');
+      const res = await syncAllLocalFilesToCloud((progress) => {
+        setSyncProgress(progress);
+      });
+      if (res.total === 0) {
+        showAlert('클라우드 동기화', '동기화할 로컬 보관 파일이 없습니다. 이미 모든 파일이 최신 상태입니다.', 'info');
+      } else {
+        showAlert(
+          '클라우드 동기화 완료',
+          `로컬 보관 파일 ${res.total}개 중 ${res.synced}개가 모바일/클라우드 서버(Upstash Redis)에 안전하게 동기화되었습니다.${res.failed > 0 ? ` (${res.failed}개 실패)` : ''}`,
+          res.failed === 0 ? 'success' : 'info'
+        );
+      }
     } catch (e: any) {
       showAlert('동기화 오류', '클라우드 동기화 중 오류가 발생했습니다: ' + (e?.message || ''), 'error');
     } finally {
       setIsSyncingCloud(false);
+      setSyncProgress(null);
     }
   };
 
@@ -294,27 +307,6 @@ export const InfoView: React.FC<InfoViewProps> = ({
       window.removeEventListener('popstate', handlePopState);
     };
   }, [isUploadModalOpen, isProjectModalOpen, viewerProject]);
-
-  // Auto-sync files from local IndexedDB cache to cloud Redis for cross-device availability
-  useEffect(() => {
-    let isMounted = true;
-    const runCloudSync = async () => {
-      try {
-        await syncAllLocalFilesToCloud();
-      } catch (err) {
-        console.warn('Sync notice:', err);
-      }
-    };
-
-    const timer = setTimeout(() => {
-      if (isMounted) runCloudSync();
-    }, 1000);
-
-    return () => {
-      isMounted = false;
-      clearTimeout(timer);
-    };
-  }, [infoProjects]);
 
   const openViewer = (project: InfoProject, fileIdx: number = 0) => {
     try {
@@ -595,16 +587,16 @@ export const InfoView: React.FC<InfoViewProps> = ({
           console.warn('Local cache notice:', cacheErr);
         }
 
-        // 2. High-reliability Chunked Cloud Upload (Guaranteed Redis + Disk persistence)
+        // 2. High-speed Direct Cloud Upload (Disk + Redis persistence)
         let savedUrl = `/api/file/${encodeURIComponent(fileId)}`;
         try {
-          const chunkRes = await uploadFileWithChunks(fileId, file.name, fileBlob);
-          if (chunkRes.success && chunkRes.url) {
-            savedUrl = chunkRes.url;
-            fileSize = chunkRes.size || fileSize;
+          const directRes = await uploadBlobDirect(fileId, file.name, fileBlob);
+          if (directRes.success && directRes.url) {
+            savedUrl = directRes.url;
+            fileSize = directRes.size || fileSize;
           }
         } catch (cloudErr) {
-          console.warn('Chunk upload notice:', cloudErr);
+          console.warn('Direct upload notice:', cloudErr);
         }
 
         const newFileObj: InfoFile = {
@@ -734,8 +726,16 @@ export const InfoView: React.FC<InfoViewProps> = ({
                 className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white px-3.5 md:px-4 py-2.5 rounded-xl font-bold text-xs md:text-sm shadow-md shadow-emerald-200 transition-all cursor-pointer disabled:opacity-50"
               >
                 <RefreshCw size={16} className={isSyncingCloud ? 'animate-spin' : ''} />
-                <span className="hidden sm:inline">{isSyncingCloud ? '동기화 중...' : '클라우드 동기화'}</span>
-                <span className="sm:hidden">{isSyncingCloud ? '동기화' : '동기화'}</span>
+                <span className="hidden sm:inline">
+                  {isSyncingCloud 
+                    ? (syncProgress ? `동기화 중 (${syncProgress.current}/${syncProgress.total})` : '동기화 준비...') 
+                    : '클라우드 동기화'}
+                </span>
+                <span className="sm:hidden">
+                  {isSyncingCloud 
+                    ? (syncProgress ? `${syncProgress.percentage}%` : '진행중') 
+                    : '동기화'}
+                </span>
               </button>
             </>
           )}
@@ -798,6 +798,27 @@ export const InfoView: React.FC<InfoViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Cloud Sync Active Live Progress Banner */}
+      {isSyncingCloud && syncProgress && (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3.5 shadow-sm text-xs">
+          <div className="flex items-center justify-between font-bold text-emerald-900 mb-1.5">
+            <span className="flex items-center gap-2">
+              <RefreshCw size={14} className="animate-spin text-emerald-600" />
+              <span>클라우드 서버(Redis) 파일 동기화 진행 중: {syncProgress.currentFileName}</span>
+            </span>
+            <span className="font-mono text-emerald-700 font-black">
+              {syncProgress.current} / {syncProgress.total}개 ({syncProgress.percentage}%)
+            </span>
+          </div>
+          <div className="w-full h-2 bg-emerald-100 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-emerald-600 transition-all duration-300 ease-out rounded-full"
+              style={{ width: `${syncProgress.percentage}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Projects List: Green Card Style */}
       {filteredProjects.length === 0 ? (
