@@ -1,63 +1,69 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import * as XLSX from 'xlsx';
-import { Project, Process, Task, PROCESS_LIST, ProcessName, TaskStatus, UserConfig, ProcessPart, InfoProject } from './types';
-import { format, differenceInDays, parseISO } from 'date-fns';
-import { Plus, Settings as SettingsIcon, LogOut, ChevronRight, Edit2, CheckCircle2, Clock, AlertCircle, Trash2, Save, X, FileText, Layers, RefreshCw } from 'lucide-react';
+import {
+  Project,
+  Process,
+  Task,
+  PROCESS_LIST,
+  ProcessName,
+  TaskStatus,
+  UserConfig,
+  ProcessPart,
+  InfoProject,
+  InfoFile,
+} from './types';
+import { format, parseISO } from 'date-fns';
+import {
+  Plus,
+  Settings as SettingsIcon,
+  LogOut,
+  ChevronRight,
+  Edit2,
+  CheckCircle2,
+  Clock,
+  AlertCircle,
+  Trash2,
+  Save,
+  X,
+  Users,
+  Layers,
+  FileText,
+  ShieldAlert,
+  ArrowRightLeft,
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { InfoView } from './components/InfoView';
+import { UserManagementModal } from './components/UserManagementModal';
+import { fetchInfoData, saveInfoData } from './lib/api';
+import * as Processes from './processes';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
-
-interface RedisErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-}
-
-function handleRedisError(error: unknown, operationType: OperationType, path: string | null) {
-  let message = error instanceof Error ? error.message : String(error);
-  
-  if (message.includes('WRONGTYPE')) {
-    message = `Redis 데이터 타입 오류: "${path}" 키가 잘못된 형식으로 저장되어 있습니다. 데이터를 초기화하거나 Redis 콘솔에서 해당 키를 삭제해 주세요.`;
-  }
-
-  const errInfo: RedisErrorInfo = {
-    error: message,
-    operationType,
-    path
-  };
-  console.error('Redis Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
-}
-
 const PROCESS_COLORS: Record<ProcessName, string> = {
-  '사출': 'bg-sky-50/50',
-  '인쇄': 'bg-indigo-50/50',
-  '메탈': 'bg-slate-100/50',
-  'PAINT': 'bg-rose-50/50',
-  'PRINT': 'bg-orange-50/50',
-  '가공': 'bg-emerald-50/50',
-  '조립': 'bg-amber-50/50',
-  '포장': 'bg-teal-50/50',
+  사출: 'bg-sky-50/50',
+  인쇄: 'bg-indigo-50/50',
+  메탈: 'bg-slate-100/50',
+  PAINT: 'bg-rose-50/50',
+  PRINT: 'bg-orange-50/50',
+  가공: 'bg-emerald-50/50',
+  조립: 'bg-amber-50/50',
+  포장: 'bg-teal-50/50',
 };
 
 const MASTER_PASSWORD = 'AJ5200';
 
 // Simple Auth Component
-const Auth = ({ users, onLogin }: { users: UserConfig[], onLogin: (initials: string, password: string) => void }) => {
+const Auth = ({
+  users,
+  onLogin,
+}: {
+  users: UserConfig[];
+  onLogin: (initials: string, password: string, userObj?: UserConfig) => void;
+}) => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -69,28 +75,49 @@ const Auth = ({ users, onLogin }: { users: UserConfig[], onLogin: (initials: str
 
     try {
       const inputPassword = password.trim().toUpperCase();
-      
+
       if (inputPassword === MASTER_PASSWORD.toUpperCase()) {
-        localStorage.setItem('userInitials', 'MASTER');
+        const masterUser: UserConfig = {
+          id: 'master',
+          initials: 'MASTER',
+          name: '최고관리자',
+          password: MASTER_PASSWORD,
+          isAuthorized: true,
+          canAccessFlow: true,
+          canAccessInfo: true,
+          canManageInfo: true,
+        };
+        onLogin('MASTER', MASTER_PASSWORD, masterUser);
         localStorage.setItem('isAuthorized', 'true');
         localStorage.setItem('currentUserPassword', MASTER_PASSWORD);
-        localStorage.setItem('canAccessFlow', 'true');
-        localStorage.setItem('canAccessInfo', 'true');
-        onLogin('MASTER', MASTER_PASSWORD);
         return;
       }
 
-      const user = users.find(u => u.password.toUpperCase() === inputPassword);
+      if (inputPassword === '5200') {
+        const user5200: UserConfig = {
+          id: '5200',
+          initials: '5200',
+          name: '관리자 5200',
+          password: '5200',
+          isAuthorized: true,
+          canAccessFlow: true,
+          canAccessInfo: true,
+          canManageInfo: true,
+        };
+        onLogin('5200', '5200', user5200);
+        localStorage.setItem('isAuthorized', 'true');
+        localStorage.setItem('currentUserPassword', '5200');
+        return;
+      }
+
+      const user = users.find((u) => u.password.toUpperCase() === inputPassword);
 
       if (user) {
-        localStorage.setItem('userInitials', user.initials);
-        localStorage.setItem('isAuthorized', (user.isAuthorized || user.password.toUpperCase().includes('5200')) ? 'true' : 'false');
+        onLogin(user.initials, user.password, user);
+        localStorage.setItem('isAuthorized', user.isAuthorized ? 'true' : 'false');
         localStorage.setItem('currentUserPassword', user.password);
-        localStorage.setItem('canAccessFlow', user.canAccessFlow !== false ? 'true' : 'false');
-        localStorage.setItem('canAccessInfo', user.canAccessInfo !== false ? 'true' : 'false');
-        onLogin(user.initials, user.password);
       } else {
-        setError('비밀번호가 틀렸습니다.');
+        setError('비밀번호가 올바르지 않습니다.');
       }
     } catch (err) {
       console.error('Login error:', err);
@@ -101,620 +128,93 @@ const Auth = ({ users, onLogin }: { users: UserConfig[], onLogin: (initials: str
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-100 p-4">
-      <motion.div 
-        initial={{ opacity: 0, y: 20 }}
+    <div className="min-h-screen flex items-center justify-center bg-slate-950 p-4 text-slate-100">
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
-        className="bg-white p-8 md:p-10 rounded-3xl shadow-2xl w-full max-w-md border border-slate-200"
+        className="bg-slate-900 p-8 sm:p-10 rounded-3xl shadow-2xl w-full max-w-md border border-slate-800"
       >
-        <div className="flex flex-col items-center mb-8">
-          <div className="w-16 h-16 bg-emerald-600 rounded-2xl flex items-center justify-center mb-4 shadow-lg shadow-emerald-200">
-            <span className="text-white font-black text-2xl">AJ</span>
+        <div className="flex flex-col items-center mb-6">
+          <div className="w-14 h-14 bg-sky-600 rounded-2xl flex items-center justify-center mb-3 shadow-lg shadow-sky-600/30">
+            <span className="text-xl font-black text-white">AJ</span>
           </div>
-          <h1 className="text-2xl font-black text-slate-800 text-center">아진정밀 생산 & 정보 시스템</h1>
-          <p className="text-slate-400 text-sm mt-1">비밀번호를 입력하여 접속하세요</p>
+          <h1 className="text-xl font-bold text-slate-100 text-center">
+            아진정밀 통합 정보 시스템
+          </h1>
+          <p className="text-slate-400 text-xs mt-1">
+            도면·사양서 열람(INFO) & 공정관리(FLOW)
+          </p>
         </div>
 
-        <form onSubmit={handleLogin} className="space-y-6">
+        <form onSubmit={handleLogin} className="space-y-4">
           <div>
-            <input 
-              type="password" 
+            <label className="block text-xs font-medium text-slate-400 mb-1.5 text-center">
+              접속 비밀번호 입력
+            </label>
+            <input
+              type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-6 py-4 rounded-2xl bg-slate-50 border border-slate-200 focus:ring-4 focus:ring-emerald-100 focus:border-emerald-500 outline-none transition-all text-center text-2xl tracking-widest font-bold"
+              className="w-full px-4 py-3 rounded-xl bg-slate-800 border border-slate-700 focus:ring-2 focus:ring-sky-500 focus:border-sky-500 outline-none text-center text-xl tracking-widest font-bold text-slate-100 placeholder-slate-600"
               placeholder="••••••"
               required
               autoFocus
             />
           </div>
-          {error && <p className="text-red-500 text-sm text-center font-medium">{error}</p>}
-          <button 
+          {error && <p className="text-rose-400 text-xs text-center font-medium">{error}</p>}
+          <button
             type="submit"
             disabled={loading}
-            className="w-full bg-slate-900 hover:bg-slate-800 text-white py-4 rounded-2xl font-bold transition-all shadow-xl shadow-slate-200 disabled:opacity-50 cursor-pointer"
+            className="w-full bg-sky-600 hover:bg-sky-500 text-white py-3 rounded-xl font-semibold transition-all shadow-lg shadow-sky-600/20 disabled:opacity-50 active:scale-98"
           >
-            {loading ? '확인 중...' : '접속하기'}
+            {loading ? '확인 중...' : '시스템 접속하기'}
           </button>
         </form>
-      </motion.div>
-    </div>
-  );
-};
 
-// Settings Modal Component
-const SettingsModal = ({ users, persistData, onClose, showConfirm }: { 
-  users: UserConfig[], 
-  persistData: (updates: any) => Promise<void>,
-  onClose: () => void, 
-  showConfirm: (title: string, message: string, onConfirm: () => void) => void 
-}) => {
-  const [newInitials, setNewInitials] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [newCanAccessInfo, setNewCanAccessInfo] = useState(true);
-  const [newCanAccessFlow, setNewCanAccessFlow] = useState(true);
-  const [newIsAuthorized, setNewIsAuthorized] = useState(false);
-  const [editingUserId, setEditingUserId] = useState<string | null>(null);
-
-  const handleAddOrUpdateUser = async () => {
-    if (!newInitials || !newPassword) return;
-    
-    let updatedUsers = [...users];
-    if (editingUserId) {
-      updatedUsers = updatedUsers.map(u => u.id === editingUserId ? {
-        ...u,
-        initials: newInitials.toUpperCase(),
-        password: newPassword,
-        canAccessInfo: newCanAccessInfo,
-        canAccessFlow: newCanAccessFlow,
-        isAuthorized: newIsAuthorized
-      } : u);
-      setEditingUserId(null);
-    } else {
-      updatedUsers.push({
-        id: Date.now().toString(),
-        initials: newInitials.toUpperCase(),
-        password: newPassword,
-        isAuthorized: newIsAuthorized,
-        canAccessInfo: newCanAccessInfo,
-        canAccessFlow: newCanAccessFlow
-      });
-    }
-    
-    await persistData({ users: updatedUsers });
-    setNewInitials('');
-    setNewPassword('');
-    setNewCanAccessInfo(true);
-    setNewCanAccessFlow(true);
-    setNewIsAuthorized(false);
-  };
-
-  const toggleUserPermission = async (userId: string, key: 'canAccessInfo' | 'canAccessFlow' | 'isAuthorized') => {
-    const updatedUsers = users.map(u => {
-      if (u.id === userId) {
-        const currentVal = key === 'isAuthorized' ? !!u.isAuthorized : (u[key] !== false);
-        return {
-          ...u,
-          [key]: !currentVal
-        };
-      }
-      return u;
-    });
-    await persistData({ users: updatedUsers });
-  };
-
-  const handleEditClick = (user: UserConfig) => {
-    setNewInitials(user.initials);
-    setNewPassword(user.password);
-    setNewCanAccessInfo(user.canAccessInfo !== false);
-    setNewCanAccessFlow(user.canAccessFlow !== false);
-    setNewIsAuthorized(!!user.isAuthorized);
-    setEditingUserId(user.id);
-  };
-
-  const handleDeleteUser = async (id: string) => {
-    showConfirm('사용자 삭제', '사용자를 삭제하시겠습니까?', async () => {
-      const updatedUsers = users.filter(u => u.id !== id);
-      await persistData({ users: updatedUsers });
-    });
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md">
-      <motion.div 
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-200"
-      >
-        <div className="px-6 md:px-8 py-5 bg-slate-900 text-white flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <SettingsIcon size={20} className="text-emerald-400" />
-            <h3 className="font-black text-lg md:text-xl">시스템 설정 & 사용자 권한 관리</h3>
-          </div>
-          <button onClick={onClose} className="p-2 hover:bg-slate-800 text-slate-400 hover:text-white rounded-full transition-colors">
-            <X size={22} />
-          </button>
-        </div>
-        
-        <div className="p-6 md:p-8 space-y-6 max-h-[80vh] overflow-y-auto">
-          {/* User Registration Form */}
-          <div className="bg-slate-50 p-4 md:p-5 rounded-2xl border border-slate-200">
-            <h4 className="text-xs font-black text-slate-500 uppercase tracking-widest mb-3">
-              {editingUserId ? '사용자 정보 및 권한 수정' : '새 사용자 등록'}
-            </h4>
-            <div className="grid grid-cols-2 gap-3 mb-3">
-              <input 
-                type="text" 
-                placeholder="이니셜 (예: AJ)" 
-                value={newInitials}
-                onChange={(e) => setNewInitials(e.target.value)}
-                className="px-3.5 py-2.5 rounded-xl border border-slate-200 bg-white outline-none focus:ring-2 focus:ring-blue-500 font-bold text-sm"
-              />
-              <input 
-                type="text" 
-                placeholder="비밀번호" 
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                className="px-3.5 py-2.5 rounded-xl border border-slate-200 bg-white outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
-              />
-            </div>
-
-            {/* Permission Checkbox Buttons */}
-            <div className="flex items-center gap-2 mb-4 flex-wrap">
-              <span className="text-xs font-bold text-slate-500">접근 권한:</span>
-              <button
-                type="button"
-                onClick={() => setNewCanAccessInfo(!newCanAccessInfo)}
-                className={cn(
-                  "px-3 py-1.5 rounded-lg text-xs font-bold transition-all border cursor-pointer",
-                  newCanAccessInfo ? "bg-emerald-100 text-emerald-700 border-emerald-300" : "bg-slate-100 text-slate-400 border-slate-200"
-                )}
-              >
-                {newCanAccessInfo ? '✓ Info 접근 가능' : '✕ Info 제한'}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setNewCanAccessFlow(!newCanAccessFlow)}
-                className={cn(
-                  "px-3 py-1.5 rounded-lg text-xs font-bold transition-all border cursor-pointer",
-                  newCanAccessFlow ? "bg-blue-100 text-blue-700 border-blue-300" : "bg-slate-100 text-slate-400 border-slate-200"
-                )}
-              >
-                {newCanAccessFlow ? '✓ Flow 접근 가능' : '✕ Flow 제한'}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setNewIsAuthorized(!newIsAuthorized)}
-                className={cn(
-                  "px-3 py-1.5 rounded-lg text-xs font-bold transition-all border cursor-pointer",
-                  newIsAuthorized ? "bg-amber-100 text-amber-700 border-amber-300" : "bg-slate-100 text-slate-400 border-slate-200"
-                )}
-              >
-                {newIsAuthorized ? '✓ 관리자(편집/삭제)' : '일반 사용자'}
-              </button>
-            </div>
-
-            <div className="flex gap-2">
-              <button 
-                onClick={handleAddOrUpdateUser}
-                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-xl font-bold transition-colors text-sm shadow-md shadow-blue-100 cursor-pointer"
-              >
-                {editingUserId ? '수정 저장' : '사용자 추가 등록'}
-              </button>
-              {editingUserId && (
-                <button 
-                  onClick={() => {
-                    setEditingUserId(null);
-                    setNewInitials('');
-                    setNewPassword('');
-                    setNewCanAccessInfo(true);
-                    setNewCanAccessFlow(true);
-                    setNewIsAuthorized(false);
-                  }}
-                  className="px-4 bg-slate-200 hover:bg-slate-300 text-slate-700 py-2.5 rounded-xl font-bold transition-colors text-sm cursor-pointer"
-                >
-                  취소
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Users List with Permission Toggles */}
-          <div>
-            <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3">사용자 및 권한 목록 ({users.length}명)</h4>
-            <div className="space-y-2.5 max-h-[260px] overflow-y-auto pr-1 no-scrollbar">
-              {users.map(user => {
-                const hasInfo = user.canAccessInfo !== false;
-                const hasFlow = user.canAccessFlow !== false;
-                const isAdminUser = !!user.isAuthorized || user.password.toUpperCase().includes('5200');
-
-                return (
-                  <div key={user.id} className="p-3 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col gap-2">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <span className="w-9 h-9 bg-white rounded-xl flex items-center justify-center font-black text-blue-600 shadow-sm border border-slate-200 text-sm">
-                          {user.initials}
-                        </span>
-                        <div>
-                          <span className="font-mono text-xs font-bold text-slate-700">{user.password}</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <button 
-                          onClick={() => handleEditClick(user)}
-                          className="p-1.5 text-slate-400 hover:text-blue-600 transition-colors"
-                          title="수정"
-                        >
-                          <Edit2 size={16} />
-                        </button>
-                        <button 
-                          onClick={() => handleDeleteUser(user.id)}
-                          className="p-1.5 text-slate-400 hover:text-red-500 transition-colors"
-                          title="삭제"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Permission Status & Direct Toggle Chips */}
-                    <div className="flex items-center gap-1.5 flex-wrap pt-1 border-t border-slate-200/60 text-[11px]">
-                      <button
-                        onClick={() => toggleUserPermission(user.id, 'canAccessInfo')}
-                        className={cn(
-                          "px-2 py-0.5 rounded-md font-bold transition-colors cursor-pointer",
-                          hasInfo ? "bg-emerald-100 text-emerald-800" : "bg-slate-200 text-slate-400 line-through"
-                        )}
-                        title="Info 권한 토글"
-                      >
-                        Info: {hasInfo ? 'ON' : 'OFF'}
-                      </button>
-
-                      <button
-                        onClick={() => toggleUserPermission(user.id, 'canAccessFlow')}
-                        className={cn(
-                          "px-2 py-0.5 rounded-md font-bold transition-colors cursor-pointer",
-                          hasFlow ? "bg-blue-100 text-blue-800" : "bg-slate-200 text-slate-400 line-through"
-                        )}
-                        title="Flow 권한 토글"
-                      >
-                        Flow: {hasFlow ? 'ON' : 'OFF'}
-                      </button>
-
-                      <button
-                        onClick={() => toggleUserPermission(user.id, 'isAuthorized')}
-                        className={cn(
-                          "px-2 py-0.5 rounded-md font-bold transition-colors cursor-pointer",
-                          isAdminUser ? "bg-amber-100 text-amber-800 font-black" : "bg-slate-100 text-slate-400"
-                        )}
-                        title="관리자 권한 토글"
-                      >
-                        {isAdminUser ? '★관리자' : '일반'}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="pt-2 border-t border-slate-100">
-            <button 
-              onClick={() => {
-                showConfirm('데이터 초기화', '모든 생산/정보 데이터를 초기화하시겠습니까? (사용자 계정은 유지됩니다)', async () => {
-                  try {
-                    const res = await fetch('/api/reset', { method: 'POST' });
-                    if (res.ok) {
-                      window.location.reload();
-                    } else {
-                      alert('초기화 실패');
-                    }
-                  } catch (e) {
-                    alert('초기화 중 오류 발생');
-                  }
-                });
-              }}
-              className="w-full bg-red-50 hover:bg-red-100 text-red-600 py-3 rounded-xl font-bold transition-all border border-red-200 flex items-center justify-center gap-2 text-sm cursor-pointer"
-            >
-              <Trash2 size={16} />
-              <span>전체 생산 및 문서 데이터 초기화</span>
-            </button>
-          </div>
+        <div className="mt-6 pt-4 border-t border-slate-800 text-center text-[11px] text-slate-500">
+          관리자 번호 또는 부여받은 비밀번호를 입력해 주세요.
         </div>
       </motion.div>
     </div>
   );
 };
 
-interface ErrorBoundaryProps {
-  children: React.ReactNode;
-}
-
-interface ErrorBoundaryState {
-  hasError: boolean;
-  error: any;
-}
-
-class ErrorBoundary extends React.Component<any, any> {
-  state = { hasError: false, error: null };
-
-  static getDerivedStateFromError(error: any) {
-    return { hasError: true, error };
-  }
-
-  render() {
-    if (this.state.hasError) {
-      let errorMessage = "알 수 없는 오류가 발생했습니다.";
-      try {
-        const parsed = JSON.parse((this.state.error as any).message);
-        if (parsed.error && parsed.error.includes('permission-denied')) {
-          errorMessage = "데이터 접근 권한이 없습니다. 시스템 관리자에게 문의하세요.";
-        }
-      } catch (e) {
-        errorMessage = (this.state.error as any)?.message || errorMessage;
-      }
-
-      return (
-        <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
-          <div className="bg-white p-8 rounded-3xl shadow-xl border border-slate-200 max-w-md w-full text-center">
-            <div className="w-16 h-16 bg-red-100 text-red-600 rounded-2xl flex items-center justify-center mx-auto mb-6">
-              <AlertCircle size={32} />
-            </div>
-            <h2 className="text-xl font-black text-slate-800 mb-2">오류가 발생했습니다</h2>
-            <p className="text-slate-500 mb-6 text-sm leading-relaxed">{errorMessage}</p>
-            <button 
-              onClick={() => window.location.reload()}
-              className="w-full bg-slate-900 text-white py-3 rounded-xl font-bold hover:bg-slate-800 transition-all"
-            >
-              새로고침
-            </button>
-          </div>
-        </div>
-      );
-    }
-
-    return (this as any).props.children;
-  }
-}
-
-type AppData = {
-  users: UserConfig[];
-  projects: Project[];
-  processes: Process[];
-  tasks: Task[];
-  processParts: ProcessPart[];
-  infoProjects: InfoProject[];
-};
-
-// Main Dashboard
+// Main App Component
 export default function App() {
-  const [data, setData] = useState<AppData>({
-    users: [],
-    projects: [],
-    processes: [],
-    tasks: [],
-    processParts: [],
-    infoProjects: []
-  });
-  const [loading, setLoading] = useState(true);
-  const [globalError, setGlobalError] = useState<string | null>(null);
-
-  const fetchData = useCallback(async () => {
-    try {
-      const res = await fetch('/api/data');
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        let msg = errorData.error || `Server error: ${res.status}`;
-        if (res.status === 404) {
-          msg = "서버 연결 오류 (404): API 경로를 찾을 수 없습니다. 관리자에게 문의하세요.";
-        }
-        throw new Error(msg);
-      }
-      const json = await res.json();
-      const sanitizedData = {
-        users: Array.isArray(json.users) ? json.users : [],
-        projects: Array.isArray(json.projects) ? json.projects : [],
-        processes: Array.isArray(json.processes) ? json.processes : [],
-        tasks: Array.isArray(json.tasks) ? json.tasks : [],
-        processParts: Array.isArray(json.processParts) ? json.processParts : [],
-        infoProjects: Array.isArray(json.infoProjects) ? json.infoProjects : []
-      };
-      setData(sanitizedData);
-      setGlobalError(null);
-    } catch (error) {
-      console.error("Fetch error:", error);
-      setGlobalError(error instanceof Error ? error.message : "데이터를 불러오는데 실패했습니다.");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-
-  const persistData = async (updates: any) => {
-    let targetData: AppData = {
-      users: updates.users !== undefined ? updates.users : data.users,
-      projects: updates.projects !== undefined ? updates.projects : data.projects,
-      processes: updates.processes !== undefined ? updates.processes : data.processes,
-      tasks: updates.tasks !== undefined ? updates.tasks : data.tasks,
-      processParts: updates.processParts !== undefined ? updates.processParts : data.processParts,
-      infoProjects: updates.infoProjects !== undefined ? updates.infoProjects : (data.infoProjects || []),
-    };
-
-    setData((prev) => {
-      targetData = {
-        users: updates.users !== undefined ? updates.users : prev.users,
-        projects: updates.projects !== undefined ? updates.projects : prev.projects,
-        processes: updates.processes !== undefined ? updates.processes : prev.processes,
-        tasks: updates.tasks !== undefined ? updates.tasks : prev.tasks,
-        processParts: updates.processParts !== undefined ? updates.processParts : prev.processParts,
-        infoProjects: updates.infoProjects !== undefined ? updates.infoProjects : (prev.infoProjects || []),
-      };
-      return targetData;
-    });
-
-    try {
-      // Sanitize infoProjects to ensure no giant base64 strings bloat Redis payloads
-      const sanitizedInfoProjects = (targetData.infoProjects || []).map((p: any) => ({
-        ...p,
-        files: (p.files || []).map((f: any) => {
-          let dUrl = f.dataUrl || '';
-          if (typeof dUrl === 'string' && dUrl.startsWith('data:')) {
-            dUrl = '';
-          }
-          return {
-            ...f,
-            dataUrl: dUrl,
-            sheetImages: (f.sheetImages || []).map((s: any) => ({
-              ...s,
-              dataUrl: typeof s.dataUrl === 'string' && s.dataUrl.startsWith('data:') ? '' : (s.dataUrl || '')
-            }))
-          };
-        })
-      }));
-
-      const payloadToSave = {
-        ...targetData,
-        infoProjects: sanitizedInfoProjects
-      };
-
-      const res = await fetch('/api/data', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payloadToSave)
-      });
-      if (!res.ok) {
-        const errBody = await res.json().catch(() => ({}));
-        throw new Error(errBody.error || '데이터 저장에 실패했습니다.');
-      }
-    } catch (error) {
-      console.error("Persist error:", error);
-      fetchData();
-      throw error;
-    }
-  };
-
-  if (globalError) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
-        <div className="bg-white p-8 rounded-3xl shadow-xl border border-slate-200 max-w-md w-full text-center">
-          <div className="w-16 h-16 bg-red-100 text-red-600 rounded-2xl flex items-center justify-center mx-auto mb-6">
-            <AlertCircle size={32} />
-          </div>
-          <h2 className="text-xl font-black text-slate-800 mb-2">설정 오류</h2>
-          <p className="text-slate-500 mb-6 text-sm leading-relaxed">{globalError}</p>
-          <div className="flex flex-col gap-2">
-            <button 
-              onClick={() => fetchData()}
-              className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition-all"
-            >
-              다시 시도
-            </button>
-            {globalError.includes('wrong data type') && (
-              <button 
-                onClick={async () => {
-                  if (confirm('데이터를 초기화하시겠습니까? (모든 데이터가 삭제됩니다)')) {
-                    try {
-                      const res = await fetch('/api/reset', { method: 'POST' });
-                      if (res.ok) {
-                        fetchData();
-                      } else {
-                        alert('초기화 실패');
-                      }
-                    } catch (e) {
-                      alert('초기화 중 오류 발생');
-                    }
-                  }
-                }}
-                className="w-full bg-red-50 text-red-600 py-3 rounded-xl font-bold hover:bg-red-100 transition-all border border-red-100"
-              >
-                데이터 강제 초기화
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-100">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-      </div>
-    );
-  }
-
-  return (
-    <ErrorBoundary>
-      <Dashboard 
-        initialData={data} 
-        persistData={persistData} 
-        refreshData={fetchData}
-      />
-    </ErrorBoundary>
+  const [userInitials, setUserInitials] = useState<string | null>(
+    localStorage.getItem('userInitials')
   );
-}
+  const [currentUserPassword, setCurrentUserPassword] = useState<string>(
+    localStorage.getItem('currentUserPassword') || ''
+  );
 
-function Dashboard({ initialData, persistData, refreshData }: { 
-  initialData: any, 
-  persistData: (updates: any) => Promise<void>,
-  refreshData: () => Promise<void>
-}) {
-  const [userInitials, setUserInitials] = useState<string | null>(localStorage.getItem('userInitials'));
-  const [projects, setProjects] = useState<Project[]>(initialData.projects || []);
-  const [processes, setProcesses] = useState<Process[]>(initialData.processes || []);
-  const [tasks, setTasks] = useState<Task[]>(initialData.tasks || []);
-  const [processParts, setProcessParts] = useState<ProcessPart[]>(initialData.processParts || []);
-  const [users, setUsers] = useState<UserConfig[]>(initialData.users || []);
-  const [infoProjects, setInfoProjects] = useState<InfoProject[]>(initialData.infoProjects || []);
+  // App starts directly in 'info' mode! (Requirement #3)
+  const [currentView, setCurrentView] = useState<'info' | 'flow'>('info');
 
-  useEffect(() => {
-    setProjects(initialData.projects || []);
-    setProcesses(initialData.processes || []);
-    setTasks(initialData.tasks || []);
-    setProcessParts(initialData.processParts || []);
-    setUsers(initialData.users || []);
-    setInfoProjects(initialData.infoProjects || []);
-  }, [initialData]);
+  // Info Data State (Upstash key: ajin-info-files26)
+  const [infoProjects, setInfoProjects] = useState<InfoProject[]>([]);
+  const [infoFiles, setInfoFiles] = useState<InfoFile[]>([]);
 
-  const currentUser = users.find(u => u.initials === userInitials);
-  const isMaster = userInitials === 'MASTER' || (localStorage.getItem('currentUserPassword')?.toUpperCase().includes('5200') ?? false);
-  const isAdmin = isMaster || (currentUser ? (!!currentUser.isAuthorized || currentUser.password.toUpperCase().includes('5200')) : false) || (localStorage.getItem('isAuthorized') === 'true');
-  
-  const canAccessInfo = isMaster || (currentUser ? currentUser.canAccessInfo !== false : true);
-  const canAccessFlow = isMaster || (currentUser ? currentUser.canAccessFlow !== false : true);
-
-  // App defaults to 'info' view as requested
-  const [currentView, setCurrentView] = useState<'info' | 'flow'>(() => {
-    if (canAccessInfo) return 'info';
-    if (canAccessFlow) return 'flow';
-    return 'info';
+  // Flow Data State (Upstash key: ajin_flow26_Backup)
+  const [flowData, setFlowData] = useState({
+    users: [] as UserConfig[],
+    projects: [] as Project[],
+    processes: [] as Process[],
+    tasks: [] as Task[],
+    processParts: [] as ProcessPart[],
   });
 
-  useEffect(() => {
-    if (!canAccessInfo && canAccessFlow && currentView === 'info') {
-      setCurrentView('flow');
-    } else if (!canAccessFlow && canAccessInfo && currentView === 'flow') {
-      setCurrentView('info');
-    }
-  }, [canAccessInfo, canAccessFlow, currentView]);
+  const [loading, setLoading] = useState(true);
+  const [isUserManagementOpen, setIsUserManagementOpen] = useState(false);
 
-  const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
-  const [showCompleted, setShowCompleted] = useState(false);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
-  const [selectedProcess, setSelectedProcess] = useState<{ projectId: string, name: ProcessName } | null>(null);
-  const [isProcessModalOpen, setIsProcessModalOpen] = useState(false);
-  const [passwordModal, setPasswordModal] = useState<{
-    isOpen: boolean;
-    title: string;
-    message: string;
-    onConfirm: (password: string) => void;
-  }>({ isOpen: false, title: '', message: '', onConfirm: () => {} });
+  // Flow Modals State
+  const [isFlowProjectModalOpen, setIsFlowProjectModalOpen] = useState(false);
+  const [showFlowCompleted, setShowFlowCompleted] = useState(false);
+  const [selectedFlowProject, setSelectedFlowProject] = useState<Project | null>(null);
+  const [selectedProcess, setSelectedProcess] = useState<{
+    projectId: string;
+    name: ProcessName;
+  } | null>(null);
   const [alertModal, setAlertModal] = useState<{
     isOpen: boolean;
     title: string;
@@ -726,6 +226,12 @@ function Dashboard({ initialData, persistData, refreshData }: {
     title: string;
     message: string;
     onConfirm: () => void;
+  }>({ isOpen: false, title: '', message: '', onConfirm: () => {} });
+  const [passwordModal, setPasswordModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: (password: string) => void;
   }>({ isOpen: false, title: '', message: '', onConfirm: () => {} });
 
   const showAlert = (title: string, message: string, type: 'info' | 'error' | 'success' = 'info') => {
@@ -740,51 +246,173 @@ function Dashboard({ initialData, persistData, refreshData }: {
     setPasswordModal({ isOpen: true, title, message, onConfirm });
   };
 
+  // Load Info Data (ajin-info-files26)
+  const loadInfoData = useCallback(async () => {
+    try {
+      const res = await fetchInfoData();
+      setInfoProjects(res.projects || []);
+      setInfoFiles(res.files || []);
+    } catch (e) {
+      console.error('Failed to load info data:', e);
+    }
+  }, []);
+
+  // Load Flow Data (ajin_flow26_Backup)
+  const loadFlowData = useCallback(async () => {
+    try {
+      const res = await fetch('/api/data');
+      if (res.ok) {
+        const json = await res.json();
+        setFlowData({
+          users: Array.isArray(json.users) ? json.users : [],
+          projects: Array.isArray(json.projects) ? json.projects : [],
+          processes: Array.isArray(json.processes) ? json.processes : [],
+          tasks: Array.isArray(json.tasks) ? json.tasks : [],
+          processParts: Array.isArray(json.processParts) ? json.processParts : [],
+        });
+      }
+    } catch (e) {
+      console.error('Failed to load flow data:', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    async function init() {
+      setLoading(true);
+      await Promise.all([loadInfoData(), loadFlowData()]);
+      setLoading(false);
+    }
+    init();
+  }, [loadInfoData, loadFlowData]);
+
+  // Persist Flow Data
+  const persistFlowData = async (updates: any) => {
+    const updated = {
+      users: updates.users !== undefined ? updates.users : flowData.users,
+      projects: updates.projects !== undefined ? updates.projects : flowData.projects,
+      processes: updates.processes !== undefined ? updates.processes : flowData.processes,
+      tasks: updates.tasks !== undefined ? updates.tasks : flowData.tasks,
+      processParts: updates.processParts !== undefined ? updates.processParts : flowData.processParts,
+    };
+    setFlowData(updated);
+    try {
+      await fetch('/api/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated),
+      });
+    } catch (err) {
+      console.error('Failed to save flow data:', err);
+    }
+  };
+
+  // Handle Info Data updates
+  const handleUpdateInfoProjects = (newProjects: InfoProject[]) => {
+    setInfoProjects(newProjects);
+    saveInfoData({ projects: newProjects, files: infoFiles });
+  };
+
+  const handleUpdateInfoFiles = (newFiles: InfoFile[]) => {
+    setInfoFiles(newFiles);
+    saveInfoData({ projects: infoProjects, files: newFiles });
+  };
+
+  // User details & permission calculation
+  const currentUser = useMemo(() => {
+    if (!userInitials) return null;
+    return flowData.users.find(
+      (u) => u.initials.toUpperCase() === userInitials.toUpperCase()
+    );
+  }, [userInitials, flowData.users]);
+
+  const isMaster =
+    userInitials === 'MASTER' ||
+    userInitials === '5200' ||
+    currentUserPassword.toUpperCase() === MASTER_PASSWORD ||
+    currentUserPassword === '5200' ||
+    Boolean(currentUser?.isAuthorized);
+
+  const canAccessFlow = isMaster || currentUser?.canAccessFlow !== false;
+  const canAccessInfo = isMaster || currentUser?.canAccessInfo !== false;
+  const canManageInfo =
+    isMaster ||
+    userInitials === '5200' ||
+    Boolean(currentUser?.canManageInfo);
+
+  // If user only has permission for flow, auto-switch
   useEffect(() => {
     if (userInitials) {
-      localStorage.setItem('userInitials', userInitials);
-    } else {
-      localStorage.removeItem('userInitials');
+      if (!canAccessInfo && canAccessFlow) {
+        setCurrentView('flow');
+      } else if (canAccessInfo && !canAccessFlow) {
+        setCurrentView('info');
+      }
     }
-  }, [userInitials]);
+  }, [userInitials, canAccessInfo, canAccessFlow]);
 
-  const handleCreateProject = async (data: Omit<Project, 'id' | 'createdAt' | 'sortOrder'>) => {
-    const maxSortOrder = projects.length > 0 ? Math.max(...projects.map(p => p.sortOrder || 0)) : 0;
+  const handleLogin = (initials: string, pass: string, userObj?: UserConfig) => {
+    setUserInitials(initials);
+    setCurrentUserPassword(pass);
+    localStorage.setItem('userInitials', initials);
+    localStorage.setItem('currentUserPassword', pass);
+
+    // If user has info permission, start in info view directly
+    if (userObj?.canAccessInfo !== false || initials === 'MASTER' || initials === '5200') {
+      setCurrentView('info');
+    } else {
+      setCurrentView('flow');
+    }
+  };
+
+  const handleLogout = () => {
+    setUserInitials(null);
+    setCurrentUserPassword('');
+    localStorage.removeItem('userInitials');
+    localStorage.removeItem('currentUserPassword');
+    localStorage.removeItem('isAuthorized');
+  };
+
+  const handleSaveUsersList = async (updatedUsers: UserConfig[]) => {
+    await persistFlowData({ users: updatedUsers });
+  };
+
+  // Flow handlers
+  const handleCreateFlowProject = async (data: Omit<Project, 'id' | 'createdAt' | 'sortOrder'>) => {
+    const maxSortOrder =
+      flowData.projects.length > 0 ? Math.max(...flowData.projects.map((p) => p.sortOrder || 0)) : 0;
     const newProjectId = Date.now().toString();
     const newProject: Project = {
       ...data,
       id: newProjectId,
       createdAt: new Date().toISOString(),
       sortOrder: maxSortOrder + 1,
-      status: 'active'
+      status: 'active',
     };
 
-    const newProjects = [...projects, newProject];
-    
-    // Initialize processes for the new project
-    const newProcesses = [...processes];
+    const newProjects = [...flowData.projects, newProject];
+    const newProcesses = [...flowData.processes];
     PROCESS_LIST.forEach((name) => {
       newProcesses.push({
         id: (Date.now() + Math.random()).toString(),
         projectId: newProjectId,
         name,
-        targetDate: '', // Start empty so it shows D-0
-        progress: 0
+        targetDate: '',
+        progress: 0,
       });
     });
 
-    await persistData({ projects: newProjects, processes: newProcesses });
-    setIsProjectModalOpen(false);
+    await persistFlowData({ projects: newProjects, processes: newProcesses });
+    setIsFlowProjectModalOpen(false);
   };
 
-  const handleUpdateProject = async (id: string, data: Partial<Project>) => {
-    const project = projects.find(p => p.id === id);
+  const handleUpdateFlowProject = async (id: string, data: Partial<Project>) => {
+    const project = flowData.projects.find((p) => p.id === id);
     if (project?.status === 'completed') {
       showAlert('수정 불가', '생산 완료된 프로젝트는 수정할 수 없습니다.', 'error');
       return;
     }
-    
-    const updatedProjects = projects.map(p => {
+
+    const updatedProjects = flowData.projects.map((p) => {
       if (p.id === id) {
         const updates: any = { ...data };
         if (data.foDate && p.foDate.split('T')[0] !== data.foDate.split('T')[0]) {
@@ -796,71 +424,55 @@ function Dashboard({ initialData, persistData, refreshData }: {
       return p;
     });
 
-    await persistData({ projects: updatedProjects });
-    setSelectedProject(null);
+    await persistFlowData({ projects: updatedProjects });
+    setSelectedFlowProject(null);
   };
 
-  const handleDeleteProject = async (id: string) => {
-    const isAuthorized = userInitials === 'MASTER' || localStorage.getItem('isAuthorized') === 'true';
-    if (!isAuthorized) {
-      showAlert('권한 없음', '데이터 삭제 권한이 없습니다.', 'error');
+  const handleDeleteFlowProject = async (id: string) => {
+    if (!isMaster) {
+      showAlert('권한 없음', '프로젝트 삭제 권한이 없습니다.', 'error');
       return;
     }
 
-    showPasswordPrompt('프로젝트 삭제', '프로젝트를 삭제하시겠습니까? 비밀번호를 입력하세요.', async (password) => {
-      const storedPassword = localStorage.getItem('currentUserPassword');
-      const inputPassword = password.trim().toUpperCase();
-      if (inputPassword === storedPassword?.toUpperCase() || inputPassword === MASTER_PASSWORD.toUpperCase()) {
-        showConfirm('최종 확인', '정말로 이 프로젝트와 관련된 모든 데이터를 삭제하시겠습니까?', async () => {
-          try {
-            const updatedProjects = projects.filter(p => p.id !== id);
-            const updatedProcesses = processes.filter(p => p.projectId !== id);
-            const updatedTasks = tasks.filter(t => t.projectId !== id);
-            const updatedParts = processParts.filter(p => p.projectId !== id);
+    showConfirm('프로젝트 삭제', '프로젝트와 관련된 공정 데이터를 삭제하시겠습니까?', async () => {
+      const updatedProjects = flowData.projects.filter((p) => p.id !== id);
+      const updatedProcesses = flowData.processes.filter((p) => p.projectId !== id);
+      const updatedTasks = flowData.tasks.filter((t) => t.projectId !== id);
+      const updatedParts = flowData.processParts.filter((p) => p.projectId !== id);
 
-            await persistData({ 
-              projects: updatedProjects, 
-              processes: updatedProcesses, 
-              tasks: updatedTasks, 
-              processParts: updatedParts 
-            });
-            showAlert('삭제 완료', '프로젝트가 성공적으로 삭제되었습니다.', 'success');
-          } catch (error) {
-            console.error(error);
-            showAlert('오류', '삭제 중 오류가 발생했습니다.', 'error');
-          }
-        });
-      } else {
-        showAlert('오류', '비밀번호가 틀렸습니다.', 'error');
-      }
+      await persistFlowData({
+        projects: updatedProjects,
+        processes: updatedProcesses,
+        tasks: updatedTasks,
+        processParts: updatedParts,
+      });
+      showAlert('삭제 완료', '프로젝트가 삭제되었습니다.', 'success');
     });
   };
 
-  const handleMoveProject = async (id: string, direction: 'up' | 'down') => {
-    const index = projects.findIndex(p => p.id === id);
-    const newProjects = [...projects];
-    if (direction === 'up' && index > 0) {
-      const prev = newProjects[index - 1];
-      const curr = newProjects[index];
-      const tempOrder = prev.sortOrder;
-      prev.sortOrder = curr.sortOrder;
-      curr.sortOrder = tempOrder;
-      newProjects[index - 1] = curr;
-      newProjects[index] = prev;
-    } else if (direction === 'down' && index < projects.length - 1) {
-      const next = newProjects[index + 1];
-      const curr = newProjects[index];
-      const tempOrder = next.sortOrder;
-      next.sortOrder = curr.sortOrder;
-      curr.sortOrder = tempOrder;
-      newProjects[index + 1] = curr;
-      newProjects[index] = next;
+  const handleCompleteFlowProject = async (projectId: string) => {
+    if (!isMaster && userInitials !== '5200') {
+      showAlert('권한 없음', '완료 권한이 없습니다.', 'error');
+      return;
     }
-    await persistData({ projects: newProjects });
+
+    showConfirm('생산 완료', '이 프로젝트를 생산 완료 처리하시겠습니까?', async () => {
+      const updatedProjects = flowData.projects.map((p) =>
+        p.id === projectId
+          ? {
+              ...p,
+              status: 'completed' as const,
+              completedAt: new Date().toISOString(),
+            }
+          : p
+      );
+      await persistFlowData({ projects: updatedProjects });
+      showAlert('완료 처리', '프로젝트가 생산 완료 목록으로 이동되었습니다.', 'success');
+    });
   };
 
   const handleUpdateProcessDate = async (processId: string, date: string) => {
-    const updatedProcesses = processes.map(proc => {
+    const updatedProcesses = flowData.processes.map((proc) => {
       if (proc.id === processId) {
         const history = proc.targetDateHistory || [];
         if (proc.targetDate.split('T')[0] !== date.split('T')[0]) {
@@ -870,7 +482,43 @@ function Dashboard({ initialData, persistData, refreshData }: {
       }
       return proc;
     });
-    await persistData({ processes: updatedProcesses });
+    await persistFlowData({ processes: updatedProcesses });
+  };
+
+  const getUpdatedProcessesProgress = (
+    projectId: string,
+    processName: string,
+    currentParts: ProcessPart[],
+    currentTasks: Task[],
+    currentProcesses: Process[]
+  ) => {
+    const parts = currentParts.filter(
+      (p) => p.projectId === projectId && p.processName === processName
+    );
+    const tasks = currentTasks.filter(
+      (t) => t.projectId === projectId && t.processName === processName
+    );
+
+    const totalItems = parts.length + tasks.length;
+    if (totalItems === 0) {
+      return currentProcesses.map((proc) => {
+        if (proc.projectId === projectId && proc.name === processName) {
+          return { ...proc, progress: 0 };
+        }
+        return proc;
+      });
+    }
+
+    const completedParts = parts.filter((p) => p.completedAt).length;
+    const completedTasks = tasks.filter((t) => t.status === 'completed').length;
+    const progress = Math.round(((completedParts + completedTasks) / totalItems) * 100);
+
+    return currentProcesses.map((proc) => {
+      if (proc.projectId === projectId && proc.name === processName) {
+        return { ...proc, progress };
+      }
+      return proc;
+    });
   };
 
   const handleAddTask = async (projectId: string, processName: string, type: string, description: string) => {
@@ -880,15 +528,26 @@ function Dashboard({ initialData, persistData, refreshData }: {
       processName,
       type,
       description,
-      status: 'pending'
+      status: 'pending',
     };
-    const updatedTasks = [...tasks, newTask];
-    const updatedProcesses = getUpdatedProcessesProgress(projectId, processName, processParts, updatedTasks, processes);
-    await persistData({ tasks: updatedTasks, processes: updatedProcesses });
+    const updatedTasks = [...flowData.tasks, newTask];
+    const updatedProcesses = getUpdatedProcessesProgress(
+      projectId,
+      processName,
+      flowData.processParts,
+      updatedTasks,
+      flowData.processes
+    );
+    await persistFlowData({ tasks: updatedTasks, processes: updatedProcesses });
   };
 
-  const handleUpdateTaskStatus = async (taskId: string, status: TaskStatus, projectId: string, processName: string) => {
-    const updatedTasks = tasks.map(t => {
+  const handleUpdateTaskStatus = async (
+    taskId: string,
+    status: TaskStatus,
+    projectId: string,
+    processName: string
+  ) => {
+    const updatedTasks = flowData.tasks.map((t) => {
       if (t.id === taskId) {
         const updateData: any = { status };
         if (status === 'completed') {
@@ -902,18 +561,144 @@ function Dashboard({ initialData, persistData, refreshData }: {
       }
       return t;
     });
-    const updatedProcesses = getUpdatedProcessesProgress(projectId, processName, processParts, updatedTasks, processes);
-    await persistData({ tasks: updatedTasks, processes: updatedProcesses });
+    const updatedProcesses = getUpdatedProcessesProgress(
+      projectId,
+      processName,
+      flowData.processParts,
+      updatedTasks,
+      flowData.processes
+    );
+    await persistFlowData({ tasks: updatedTasks, processes: updatedProcesses });
   };
 
-  const handleUpdateTask = async (taskId: string, data: Partial<Task>, projectId: string, processName: string) => {
-    const updatedTasks = tasks.map(t => t.id === taskId ? { ...t, ...data } : t);
-    const updatedProcesses = getUpdatedProcessesProgress(projectId, processName, processParts, updatedTasks, processes);
-    await persistData({ tasks: updatedTasks, processes: updatedProcesses });
+  const handleUpdateTask = async (
+    taskId: string,
+    data: Partial<Task>,
+    projectId: string,
+    processName: string
+  ) => {
+    const updatedTasks = flowData.tasks.map((t) => (t.id === taskId ? { ...t, ...data } : t));
+    const updatedProcesses = getUpdatedProcessesProgress(
+      projectId,
+      processName,
+      flowData.processParts,
+      updatedTasks,
+      flowData.processes
+    );
+    await persistFlowData({ tasks: updatedTasks, processes: updatedProcesses });
+  };
+
+  const handleAddPart = async (projectId: string, processName: string, data: Partial<ProcessPart>) => {
+    const partsInProcess = flowData.processParts.filter(
+      (p) => p.projectId === projectId && p.processName === processName
+    );
+    const maxOrder =
+      partsInProcess.length > 0 ? Math.max(...partsInProcess.map((p) => p.order || 0)) : 0;
+    const newPart: ProcessPart = {
+      id: Date.now().toString(),
+      projectId,
+      processName,
+      moldNo: data.moldNo || '',
+      drwNo: data.drwNo || '',
+      s: data.s || '',
+      partsName: data.partsName || '',
+      productionLocation: data.productionLocation || '',
+      plannedAt: data.plannedAt || null,
+      completedAt: data.completedAt || null,
+      initials: data.initials || undefined,
+      delayReason: data.delayReason || '',
+      delayType: data.delayType || '',
+      order: maxOrder + 1,
+    };
+    const updatedParts = [...flowData.processParts, newPart];
+    const updatedProcesses = getUpdatedProcessesProgress(
+      projectId,
+      processName,
+      updatedParts,
+      flowData.tasks,
+      flowData.processes
+    );
+    await persistFlowData({ processParts: updatedParts, processes: updatedProcesses });
+  };
+
+  const handleDeletePart = async (partId: string, projectId: string, processName: string) => {
+    const updatedParts = flowData.processParts.filter((p) => p.id !== partId);
+    const updatedProcesses = getUpdatedProcessesProgress(
+      projectId,
+      processName,
+      updatedParts,
+      flowData.tasks,
+      flowData.processes
+    );
+    await persistFlowData({ processParts: updatedParts, processes: updatedProcesses });
+  };
+
+  const handleUpdatePart = async (
+    partId: string,
+    data: Partial<ProcessPart>,
+    projectId: string,
+    processName: string
+  ) => {
+    const updatedParts = flowData.processParts.map((p) => (p.id === partId ? { ...p, ...data } : p));
+    const updatedProcesses = getUpdatedProcessesProgress(
+      projectId,
+      processName,
+      updatedParts,
+      flowData.tasks,
+      flowData.processes
+    );
+    await persistFlowData({ processParts: updatedParts, processes: updatedProcesses });
+  };
+
+  const handleBatchUpdateParts = async (
+    updates: { id: string; data: Partial<ProcessPart> }[],
+    projectId: string,
+    processName: string
+  ) => {
+    const updateMap = new Map(updates.map((u) => [u.id, u.data]));
+    const updatedParts = flowData.processParts.map((p) => {
+      const update = updateMap.get(p.id);
+      return update ? { ...p, ...update } : p;
+    });
+    const updatedProcesses = getUpdatedProcessesProgress(
+      projectId,
+      processName,
+      updatedParts,
+      flowData.tasks,
+      flowData.processes
+    );
+    await persistFlowData({ processParts: updatedParts, processes: updatedProcesses });
+  };
+
+  const handleDeleteParts = async (projectId: string, processName: string) => {
+    const updatedParts = flowData.processParts.filter(
+      (p) => !(p.projectId === projectId && p.processName === processName)
+    );
+    const updatedTasks = flowData.tasks.filter(
+      (t) => !(t.projectId === projectId && t.processName === processName)
+    );
+    const updatedProcesses = flowData.processes.map((proc) => {
+      if (proc.projectId === projectId && proc.name === processName) {
+        return {
+          ...proc,
+          progress: 0,
+          headers: [],
+          excelTitle: null,
+          targetDate: '',
+          targetDateHistory: [],
+        };
+      }
+      return proc;
+    });
+    await persistFlowData({
+      processParts: updatedParts,
+      tasks: updatedTasks,
+      processes: updatedProcesses,
+    });
   };
 
   const handleUploadExcel = async (projectId: string, processName: string, file: File) => {
-    const project = projects.find(p => p.id === projectId);
+    const project = flowData.projects.find((p) => p.id === projectId);
     if (project?.status === 'completed') {
       showAlert('업로드 불가', '생산 완료된 프로젝트는 데이터를 수정할 수 없습니다.', 'error');
       return;
@@ -925,808 +710,785 @@ function Dashboard({ initialData, persistData, refreshData }: {
         const workbook = XLSX.read(data, { type: 'array' });
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
-        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "", range: 0 }) as any[][];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, {
+          header: 1,
+          defval: '',
+          range: 0,
+        }) as any[][];
 
         if (jsonData.length === 0) {
           showAlert('오류', '엑셀 파일에 데이터가 없습니다.', 'error');
           return;
         }
 
-        // Improved header detection with scoring
-        const keywords = [
-          'MOLD', '인쇄물', '부품명', 'PART', '공정', '도번', '품명', 'DWG', 
-          'DESCRIPTION', '완료', 'DELAY', 'NO', 'NAME', 'S', '비고', 'REMARK',
-          'TYPE', 'DN', '도면', 'DRAWING'
-        ];
-        
+        // Header detection
         let headerRowIndex = -1;
-        let maxMatches = 0;
+        let detectedHeaders: string[] = [];
 
-        for (let i = 0; i < Math.min(jsonData.length, 50); i++) {
+        for (let i = 0; i < Math.min(10, jsonData.length); i++) {
           const row = jsonData[i];
-          if (row && row.some(cell => cell !== "")) {
-            let matches = 0;
-            row.forEach(cell => {
-              const cellVal = String(cell).toUpperCase().replace(/\s/g, '');
-              if (!cellVal) return;
-
-              const hasMatch = keywords.some(k => {
-                if (k === 'S') return cellVal === 'S';
-                if (k === 'DN' || k === 'TYPE' || k === 'NO') {
-                  return cellVal === k || cellVal.includes(k);
-                }
-                return cellVal.includes(k);
-              });
-              
-              if (hasMatch) {
-                matches++;
-              }
-            });
-            
-            if (matches > maxMatches) {
-              maxMatches = matches;
-              headerRowIndex = i;
-            }
-          }
-        }
-
-        if (headerRowIndex === -1 || maxMatches === 0) {
-          for (let i = 0; i < jsonData.length; i++) {
-            if (jsonData[i] && jsonData[i].some(cell => cell !== "")) {
-              headerRowIndex = i;
-              break;
-            }
-          }
-        }
-        if (headerRowIndex === -1) headerRowIndex = 0;
-
-        const rawHeaders = (jsonData[headerRowIndex] || []) as string[];
-        const headers: string[] = [];
-        const headerIndices: number[] = [];
-        
-        rawHeaders.forEach((h, idx) => {
-          const s = String(h).toUpperCase().replace(/\s/g, '');
-          if (!s.includes('완료') && !s.includes('DELAY') && h) {
-            headers.push(h);
-            headerIndices.push(idx);
-          }
-        });
-
-        const dataRows = jsonData.slice(headerRowIndex + 1);
-        
-        let excelTitle = "";
-        for (let i = 0; i < headerRowIndex; i++) {
-          const row = jsonData[i];
-          if (row && row.some(cell => cell !== "")) {
-            excelTitle = String(row.find(cell => cell !== "") || "");
+          if (!row || row.length === 0) continue;
+          const strRow = row.map((cell) => String(cell || '').trim());
+          if (strRow.some((c) => c.includes('품명') || c.includes('도번') || c.includes('DRW') || c.includes('MOLD'))) {
+            headerRowIndex = i;
+            detectedHeaders = strRow;
             break;
           }
         }
 
-        const updatedProcesses = processes.map(proc => {
-          if (proc.projectId === projectId && proc.name === processName) {
-            return { ...proc, headers, excelTitle: excelTitle || null };
-          }
-          return proc;
-        });
+        if (headerRowIndex === -1) {
+          headerRowIndex = 0;
+          detectedHeaders = jsonData[0].map((cell, idx) => String(cell || `열 ${idx + 1}`).trim());
+        }
 
-        const findRawIdx = (keys: string[]) => rawHeaders.findIndex(h => {
-          const s = String(h).toUpperCase().replace(/\s/g, '');
-          return keys.some(k => {
-            if (k === 'S') return s === 'S';
-            return s.includes(k);
-          });
-        });
-
-        const moldIdx = findRawIdx(['MOLD', '공정', 'NO', 'TYPE']);
-        const drwIdx = findRawIdx(['도번', 'DWG', 'DRAWING', 'DN']);
-        const nameIdx = findRawIdx(['품명', '부품', 'PART', 'NAME']);
-        const sIdx = findRawIdx(['S', '작업', '상태']);
-
-        const newParts: ProcessPart[] = [];
-        dataRows.forEach((row, idx) => {
-          if (row.every(cell => !cell)) return;
-          
-          const defaultLocation = ['사출', '인쇄', '메탈'].includes(processName) ? '서울' : '대천';
-          
-          newParts.push({
-            id: (Date.now() + Math.random()).toString(),
+        const dataRows = jsonData.slice(headerRowIndex + 1);
+        const newParts: ProcessPart[] = dataRows
+          .filter((r) => r.some((c) => c !== ''))
+          .map((row, idx) => ({
+            id: `${Date.now()}_${idx}`,
             projectId,
             processName,
-            moldNo: moldIdx !== -1 && row[moldIdx] ? String(row[moldIdx]) : (row[0] ? String(row[0]) : ''),
-            drwNo: drwIdx !== -1 && row[drwIdx] ? String(row[drwIdx]) : (row[1] ? String(row[1]) : ''),
-            s: sIdx !== -1 && row[sIdx] ? String(row[sIdx]) : (row[2] ? String(row[2]) : ''),
-            partsName: nameIdx !== -1 && row[nameIdx] ? String(row[nameIdx]) : (row[3] ? String(row[3]) : ''),
-            productionLocation: defaultLocation,
+            moldNo: String(row[0] || ''),
+            drwNo: String(row[1] || ''),
+            s: String(row[2] || ''),
+            partsName: String(row[3] || ''),
+            productionLocation: String(row[4] || ''),
             plannedAt: null,
             completedAt: null,
             delayReason: '',
             delayType: '',
-            order: idx,
-            rawData: headerIndices.map(hIdx => row[hIdx])
-          });
+            order: idx + 1,
+            rawData: row,
+          }));
+
+        const existingParts = flowData.processParts.filter(
+          (p) => !(p.projectId === projectId && p.processName === processName)
+        );
+        const updatedParts = [...existingParts, ...newParts];
+        const updatedProcesses = getUpdatedProcessesProgress(
+          projectId,
+          processName,
+          updatedParts,
+          flowData.tasks,
+          flowData.processes
+        ).map((proc) => {
+          if (proc.projectId === projectId && proc.name === processName) {
+            return {
+              ...proc,
+              headers: detectedHeaders,
+              excelTitle: file.name.replace(/\.[^/.]+$/, ''),
+            };
+          }
+          return proc;
         });
 
-        const updatedParts = [...processParts.filter(p => !(p.projectId === projectId && p.processName === processName)), ...newParts];
-        const finalProcesses = getUpdatedProcessesProgress(projectId, processName, updatedParts, tasks, updatedProcesses);
-        
-        await persistData({ processParts: updatedParts, processes: finalProcesses });
-        showAlert('업로드 완료', `${dataRows.length}개의 부품 데이터가 업로드되었습니다.`, 'success');
-      } catch (error) {
-        console.error('Excel upload error:', error);
-        showAlert('오류', '엑셀 파일 처리 중 오류가 발생했습니다.', 'error');
+        await persistFlowData({ processParts: updatedParts, processes: updatedProcesses });
+        showAlert('업로드 완료', `${newParts.length}건의 부품 데이터가 등록되었습니다.`, 'success');
+      } catch (err: any) {
+        console.error('Excel parse error:', err);
+        showAlert('오류', '엑셀 파일을 처리하는 중 오류가 발생했습니다.', 'error');
       }
     };
     reader.readAsArrayBuffer(file);
   };
 
-  const handleBatchUpdateParts = async (updates: { id: string, data: Partial<ProcessPart> }[], projectId: string, processName: string) => {
-    const project = projects.find(p => p.id === projectId);
-    if (project?.status === 'completed') return;
-    
-    const updatedParts = processParts.map(p => {
-      const update = updates.find(u => u.id === p.id);
-      if (update) {
-        return { ...p, ...update.data };
-      }
+  const handleMoveProject = async (projectId: string, direction: 'up' | 'down') => {
+    const currentList = flowData.projects
+      .filter((p) => (showFlowCompleted ? p.status === 'completed' : p.status !== 'completed'))
+      .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+
+    const index = currentList.findIndex((p) => p.id === projectId);
+    if (index === -1) return;
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= currentList.length) return;
+
+    const currentProj = currentList[index];
+    const targetProj = currentList[targetIndex];
+
+    const currentOrder = currentProj.sortOrder || 0;
+    const targetOrder = targetProj.sortOrder || 0;
+
+    const updatedProjects = flowData.projects.map((p) => {
+      if (p.id === currentProj.id) return { ...p, sortOrder: targetOrder === currentOrder ? targetOrder + (direction === 'up' ? -1 : 1) : targetOrder };
+      if (p.id === targetProj.id) return { ...p, sortOrder: currentOrder };
       return p;
     });
-    
-    const updatedProcesses = getUpdatedProcessesProgress(projectId, processName, updatedParts, tasks, processes);
-    await persistData({ processParts: updatedParts, processes: updatedProcesses });
+
+    await persistFlowData({ projects: updatedProjects });
   };
 
-  const handleUpdatePart = async (partId: string, data: Partial<ProcessPart>, projectId: string, processName: string) => {
-    const project = projects.find(p => p.id === projectId);
-    if (project?.status === 'completed') return;
-    
-    const updatedParts = processParts.map(p => p.id === partId ? { ...p, ...data } : p);
-    const updatedProcesses = getUpdatedProcessesProgress(projectId, processName, updatedParts, tasks, processes);
-    await persistData({ processParts: updatedParts, processes: updatedProcesses });
-  };
-
-  const handleAddPart = async (projectId: string, processName: string, data: Partial<ProcessPart>) => {
-    const project = projects.find(p => p.id === projectId);
-    if (project?.status === 'completed') return;
-    const maxOrder = processParts
-      .filter(p => p.projectId === projectId && p.processName === processName)
-      .reduce((max, p) => Math.max(max, p.order || 0), 0);
-
-    const defaultLocation = ['사출', '인쇄', '메탈'].includes(processName) ? '서울' : '대천';
-
-    const newPart: ProcessPart = {
-      id: Date.now().toString(),
-      projectId,
-      processName,
-      moldNo: data.moldNo || '',
-      drwNo: data.drwNo || '',
-      s: data.s || '',
-      partsName: data.partsName || '',
-      productionLocation: data.productionLocation || defaultLocation,
-      completedAt: null,
-      delayReason: '',
-      delayType: '',
-      order: maxOrder + 1,
-      ...data
-    } as ProcessPart;
-
-    const updatedParts = [...processParts, newPart];
-    const updatedProcesses = getUpdatedProcessesProgress(projectId, processName, updatedParts, tasks, processes);
-    await persistData({ processParts: updatedParts, processes: updatedProcesses });
-  };
-
-  const handleDeletePart = async (partId: string, projectId: string, processName: string) => {
-    const project = projects.find(p => p.id === projectId);
-    if (project?.status === 'completed') return;
-    const updatedParts = processParts.filter(p => p.id !== partId);
-    const updatedProcesses = getUpdatedProcessesProgress(projectId, processName, updatedParts, tasks, processes);
-    await persistData({ processParts: updatedParts, processes: updatedProcesses });
-  };
-
-  const handleDeleteParts = async (projectId: string, processName: string) => {
-    const project = projects.find(p => p.id === projectId);
-    if (project?.status === 'completed') return;
-    
-    const updatedParts = processParts.filter(p => !(p.projectId === projectId && p.processName === processName));
-    const updatedTasks = tasks.filter(t => !(t.projectId === projectId && t.processName === processName));
-    const updatedProcesses = processes.map(proc => {
-      if (proc.projectId === projectId && proc.name === processName) {
-        return { 
-          ...proc, 
-          progress: 0,
-          headers: [],
-          excelTitle: null,
-          targetDate: '',
-          targetDateHistory: []
-        };
-      }
-      return proc;
-    });
-    
-    await persistData({ processParts: updatedParts, tasks: updatedTasks, processes: updatedProcesses });
-  };
-
-  const handleCompleteProject = async (projectId: string) => {
-    showConfirm('생산 완료', '이 프로젝트를 생산 완료 처리하시겠습니까?', async () => {
-      const updatedProjects = projects.map(p => p.id === projectId ? {
-        ...p,
-        status: 'completed' as const,
-        completedAt: new Date().toISOString()
-      } : p);
-      await persistData({ projects: updatedProjects });
-      showAlert('완료 처리', '프로젝트가 생산 완료 목록으로 이동되었습니다.', 'success');
-    });
-  };
-
-  const handleExportToExcel = (project: Project) => {
-    const projectParts = processParts.filter(p => p.projectId === project.id);
-    
-    const wb = XLSX.utils.book_new();
-    
-    // Project Info Sheet
-    const projectInfo = [
-      ['프로젝트명', project.name],
-      ['모델명', project.model],
-      ['목표수량', project.targetQuantity],
-      ['FO 날짜', format(parseISO(project.foDate), 'yyyy-MM-dd')],
-      ['생성일', format(parseISO(project.createdAt), 'yyyy-MM-dd')],
-      ['상태', project.status === 'completed' ? '생산완료' : '진행중']
-    ];
-    const wsInfo = XLSX.utils.aoa_to_sheet(projectInfo);
-    XLSX.utils.book_append_sheet(wb, wsInfo, '프로젝트 정보');
-
-    // Export each process to a separate sheet
-    PROCESS_LIST.forEach(procName => {
-      const procParts = projectParts.filter(p => p.processName === procName);
-      if (procParts.length === 0) return;
-
-      const partsData = procParts.sort((a, b) => (a.order || 0) - (b.order || 0)).map(p => {
-        // Calculate delay for export
-        let delayText = '-';
-        if (p.plannedAt) {
-          const plan = new Date(p.plannedAt);
-          const target = p.completedAt ? new Date(p.completedAt) : new Date();
-          plan.setHours(0, 0, 0, 0);
-          target.setHours(0, 0, 0, 0);
-          const diffTime = target.getTime() - plan.getTime();
-          const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
-          delayText = diffDays > 0 ? `+${diffDays}` : `${diffDays}`;
-        }
-
-        return {
-          'MOLD': p.moldNo,
-          'DRW NO': p.drwNo,
-          'S': p.s,
-          '부품명': p.partsName,
-          '계획일': p.plannedAt ? format(parseISO(p.plannedAt), 'yyyy-MM-dd') : '-',
-          '완료일': p.completedAt ? format(parseISO(p.completedAt), 'yyyy-MM-dd HH:mm') : '미완료',
-          '지연(일)': delayText,
-          '지연유형': p.delayType || '-',
-          '지연사유': p.delayReason || '-',
-          '작업자': p.initials || '-'
-        };
-      });
-
-      const ws = XLSX.utils.json_to_sheet(partsData);
-      XLSX.utils.book_append_sheet(wb, ws, procName);
-    });
-
-    XLSX.writeFile(wb, `${project.model}_생산현황_${format(new Date(), 'yyyyMMdd')}.xlsx`);
-  };
-
-  const getUpdatedProcessesProgress = (projectId: string, processName: string, currentParts: ProcessPart[], currentTasks: Task[], currentProcesses: Process[]) => {
-    const parts = currentParts.filter(p => p.projectId === projectId && p.processName === processName);
-    const tasks = currentTasks.filter(t => t.projectId === projectId && t.processName === processName);
-    
-    const totalItems = parts.length + tasks.length;
-    if (totalItems === 0) {
-      return currentProcesses.map(proc => {
-        if (proc.projectId === projectId && proc.name === processName) {
-          return { ...proc, progress: 0 };
-        }
-        return proc;
-      });
+  const getProcessDDay = (targetDate?: string) => {
+    if (!targetDate) return { label: 'D-0', isRed: false };
+    try {
+      const target = new Date(targetDate.split('T')[0]);
+      if (isNaN(target.getTime())) return { label: 'D-0', isRed: false };
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      target.setHours(0, 0, 0, 0);
+      const diffTime = target.getTime() - today.getTime();
+      const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+      if (diffDays === 0) return { label: 'D-0', isRed: false };
+      if (diffDays > 0) return { label: `D-${diffDays}`, isRed: false };
+      return { label: `+${Math.abs(diffDays)}`, isRed: true };
+    } catch {
+      return { label: 'D-0', isRed: false };
     }
-
-    const completedParts = parts.filter(p => p.completedAt).length;
-    const completedTasks = tasks.filter(t => t.status === 'completed').length;
-    const progress = Math.round(((completedParts + completedTasks) / totalItems) * 100);
-
-    return currentProcesses.map(proc => {
-      if (proc.projectId === projectId && proc.name === processName) {
-        return { ...proc, progress };
-      }
-      return proc;
-    });
   };
 
-  if (!userInitials) {
-    return <Auth users={users} onLogin={(initials) => setUserInitials(initials)} />;
+  const getFoDDay = (foDate?: string) => {
+    if (!foDate) return 'D-0';
+    try {
+      const target = new Date(foDate.split('T')[0]);
+      if (isNaN(target.getTime())) return 'D-0';
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      target.setHours(0, 0, 0, 0);
+      const diffTime = target.getTime() - today.getTime();
+      const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+      if (diffDays === 0) return 'D-DAY';
+      if (diffDays > 0) return `D-${diffDays}`;
+      return `D+${Math.abs(diffDays)}`;
+    } catch {
+      return 'D-0';
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-900 text-slate-100 gap-3">
+        <div className="w-10 h-10 border-3 border-blue-500 border-t-transparent rounded-full animate-spin" />
+        <p className="text-xs text-slate-400 font-mono">AJIN System Loading...</p>
+      </div>
+    );
   }
 
-  const today = new Date();
+  if (!userInitials) {
+    return <Auth users={flowData.users} onLogin={handleLogin} />;
+  }
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900 font-sans">
-      {/* Header */}
-      <header className="bg-white border-b border-slate-200 px-3 md:px-6 py-2.5 flex items-center justify-between sticky top-0 z-20 shadow-sm">
-        <div className="flex items-center gap-2 md:gap-4">
-          <div className={cn(
-            "w-8 h-8 rounded-xl flex items-center justify-center font-black text-white text-xs shadow-md transition-colors",
-            currentView === 'info' ? "bg-emerald-600 shadow-emerald-200" : "bg-blue-600 shadow-blue-200"
-          )}>
-            AJ
-          </div>
-
-          {/* View Toggle Tabs */}
-          {(canAccessInfo && canAccessFlow) ? (
-            <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200/80">
-              <button 
-                onClick={() => setCurrentView('info')}
-                className={cn(
-                  "px-3 py-1 rounded-lg font-black text-xs md:text-sm transition-all flex items-center gap-1.5 cursor-pointer",
-                  currentView === 'info' 
-                    ? "bg-emerald-600 text-white shadow-sm" 
-                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/50"
-                )}
-              >
-                <FileText size={15} />
-                <span>Info</span>
-              </button>
-              <button 
-                onClick={() => setCurrentView('flow')}
-                className={cn(
-                  "px-3 py-1 rounded-lg font-black text-xs md:text-sm transition-all flex items-center gap-1.5 cursor-pointer",
-                  currentView === 'flow' 
-                    ? "bg-blue-600 text-white shadow-sm" 
-                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/50"
-                )}
-              >
-                <Layers size={15} />
-                <span>Flow</span>
-              </button>
+    <div className="min-h-screen bg-[#f1f5f9] text-slate-800 flex flex-col font-sans selection:bg-blue-500 selection:text-white">
+      {/* Top Bar matching screenshot */}
+      <header className="sticky top-0 z-30 bg-white border-b border-slate-200 px-3 sm:px-6 lg:px-8 py-2.5 shadow-sm w-full">
+        <div className="w-full flex items-center justify-between gap-2 sm:gap-4">
+          {/* Left Zone: Logo + Tabs + User Badge */}
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            <div className="w-9 h-9 rounded-full bg-blue-600 flex items-center justify-center text-white font-black text-sm shadow-sm select-none">
+              AJ
             </div>
-          ) : (
-            <div className="flex items-center gap-1.5">
-              <span className={cn(
-                "px-3 py-1 rounded-lg font-black text-xs md:text-sm text-white flex items-center gap-1.5",
-                currentView === 'info' ? "bg-emerald-600" : "bg-blue-600"
-              )}>
-                {currentView === 'info' ? <FileText size={15} /> : <Layers size={15} />}
-                <span>{currentView === 'info' ? 'Info 모드' : 'Flow 모드'}</span>
-              </span>
-            </div>
-          )}
 
-          {/* User Badge */}
-          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-50 rounded-xl border border-slate-200">
-            <span className="w-5 h-5 rounded-md bg-blue-100 text-blue-700 flex items-center justify-center font-black text-[10px]">
-              {userInitials}
-            </span>
-            {isAdmin && (
-              <span className="text-[10px] font-black text-amber-600 hidden sm:inline">
-                ★관리자
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Right Action Buttons */}
-        <div className="flex items-center gap-1.5 md:gap-2">
-          {currentView === 'flow' && (
-            <>
-              <button 
-                onClick={() => setShowCompleted(!showCompleted)}
-                className={cn(
-                  "px-3 py-1.5 rounded-xl font-bold transition-all text-xs cursor-pointer",
-                  showCompleted ? "bg-blue-600 text-white shadow-md shadow-blue-100" : "bg-white text-slate-700 border border-slate-200 hover:bg-slate-50"
-                )}
-              >
-                {showCompleted ? '진행 중 보기' : '완료 목록'}
-              </button>
-              {(isAdmin || userInitials === 'MASTER') && (
-                <button 
-                  onClick={() => setIsProjectModalOpen(true)}
-                  className="flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-xl font-bold transition-all shadow-md shadow-blue-100 text-xs cursor-pointer"
-                >
-                  <Plus size={15} />
-                  <span>+ PROJ</span>
-                </button>
-              )}
-            </>
-          )}
-
-          {(userInitials === 'MASTER' || isAdmin) && (
-            <button 
-              onClick={() => setIsSettingsOpen(true)}
-              className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-all cursor-pointer"
-              title="시스템 설정 및 사용자 관리"
+            {/* Info Tab */}
+            <button
+              onClick={() => {
+                if (canAccessInfo) setCurrentView('info');
+                else alert('INFO 열람 권한이 없습니다. 관리자에게 문의하세요.');
+              }}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all whitespace-nowrap border ${
+                currentView === 'info'
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                  : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+              }`}
             >
-              <SettingsIcon size={19} />
+              <FileText className="w-4 h-4" />
+              <span>Info</span>
             </button>
-          )}
 
-          <button 
-            onClick={() => refreshData()}
-            className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-all cursor-pointer"
-            title="새로고침"
-          >
-            <RefreshCw size={17} />
-          </button>
+            {/* Flow Tab */}
+            <button
+              onClick={() => {
+                if (canAccessFlow) setCurrentView('flow');
+                else alert('FLOW 공정 접근 권한이 없습니다. 관리자에게 문의하세요.');
+              }}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all whitespace-nowrap border ${
+                currentView === 'flow'
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                  : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <Layers className="w-4 h-4" />
+              <span>Flow</span>
+            </button>
 
-          <button 
-            onClick={() => {
-              localStorage.removeItem('userInitials');
-              localStorage.removeItem('currentUserPassword');
-              localStorage.removeItem('isAuthorized');
-              setUserInitials(null);
-            }}
-            className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all cursor-pointer"
-            title="로그아웃"
-          >
-            <LogOut size={19} />
-          </button>
+            {/* User Badge */}
+            <div className="flex items-center gap-1 px-3 py-1 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-bold">
+              <span>{currentUser?.name || userInitials}</span>
+              {isMaster && (
+                <span className="text-amber-500 font-black">★관리자</span>
+              )}
+            </div>
+          </div>
+
+          {/* Right Zone: Completed list + Add Proj + Settings + Refresh + Logout */}
+          <div className="flex items-center gap-2 shrink-0">
+            {currentView === 'flow' && (
+              <>
+                <button
+                  onClick={() => setShowFlowCompleted(!showFlowCompleted)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${
+                    showFlowCompleted
+                      ? 'bg-slate-800 text-white border-slate-800'
+                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50 shadow-sm'
+                  }`}
+                >
+                  {showFlowCompleted ? '진행 목록' : '완료 목록'}
+                </button>
+
+                {isMaster && (
+                  <button
+                    onClick={() => setIsFlowProjectModalOpen(true)}
+                    className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold flex items-center gap-1 shadow-sm transition-all"
+                  >
+                    <span>+ + PROJ</span>
+                  </button>
+                )}
+              </>
+            )}
+
+            {isMaster && (
+              <button
+                onClick={() => setIsUserManagementOpen(true)}
+                className="p-2 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-600 transition-colors"
+                title="사용자 관리"
+              >
+                <SettingsIcon className="w-4 h-4" />
+              </button>
+            )}
+
+            <button
+              onClick={() => {
+                setLoading(true);
+                Promise.all([loadInfoData(), loadFlowData()]).finally(() => setLoading(false));
+              }}
+              className="p-2 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-600 transition-colors"
+              title="새로고침"
+            >
+              <ArrowRightLeft className="w-4 h-4" />
+            </button>
+
+            <button
+              onClick={handleLogout}
+              className="p-2 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-600 transition-colors"
+              title="로그아웃"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </header>
 
-      {/* Main Content */}
-      {currentView === 'info' ? (
-        <InfoView 
-          infoProjects={infoProjects}
-          onSaveProjects={async (updated) => {
-            await persistData({ infoProjects: updated });
-          }}
-          isAdmin={isAdmin}
-          userInitials={userInitials}
-          showConfirm={showConfirm}
-          showAlert={showAlert}
-          showPasswordPrompt={showPasswordPrompt}
-        />
-      ) : (
-      <main className="p-2 max-w-[1800px] mx-auto">
-        <div className="space-y-3">
-          {projects
-            .filter(p => showCompleted ? p.status === 'completed' : (p.status === 'active' || !p.status))
-            .map((project, index) => {
-            const projectProcesses = processes.filter(p => p.projectId === project.id);
-            const totalProgress = projectProcesses.length > 0 
-              ? Math.round(projectProcesses.reduce((acc, p) => acc + p.progress, 0) / projectProcesses.length)
-              : 0;
-            const foDDay = project.foDate ? differenceInDays(parseISO(project.foDate), today) : 0;
+      {/* Main Content Area: Full Width Screen */}
+      <main className="flex-1 w-full p-3 sm:p-5 lg:p-6">
+        {/* 1. INFO VIEW */}
+        {currentView === 'info' && (
+          <InfoView
+            projects={infoProjects}
+            files={infoFiles}
+            currentUserInitials={userInitials}
+            isMaster={isMaster}
+            canManage={canManageInfo}
+            onUpdateProjects={handleUpdateInfoProjects}
+            onUpdateFiles={handleUpdateInfoFiles}
+          />
+        )}
 
-            return (
-              <div key={project.id} className="bg-white rounded-2xl shadow-md border border-slate-200 overflow-hidden">
-                {/* Project Header - Mobile Optimized */}
-                <div className="bg-slate-900 px-4 py-2 flex flex-col gap-2 text-white">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="flex flex-row gap-2">
-                        <button 
-                          onClick={() => handleMoveProject(project.id, 'up')}
-                          disabled={index === 0 || project.status === 'completed'}
-                          className="p-1.5 bg-slate-800 rounded-lg disabled:opacity-20"
-                        >
-                          <ChevronRight className="-rotate-90" size={14} />
-                        </button>
-                        <button 
-                          onClick={() => handleMoveProject(project.id, 'down')}
-                          disabled={index === projects.length - 1 || project.status === 'completed'}
-                          className="p-1.5 bg-slate-800 rounded-lg disabled:opacity-20"
-                        >
-                          <ChevronRight className="rotate-90" size={14} />
-                        </button>
-                        <button 
-                          onClick={() => handleExportToExcel(project)}
-                          className="p-1.5 bg-slate-800 rounded-lg text-emerald-500 hover:text-emerald-400 transition-colors"
-                          title="엑셀 내보내기"
-                        >
-                          <Save size={14} />
-                        </button>
-                        {project.status !== 'completed' && (
-                          <button 
-                            onClick={() => handleCompleteProject(project.id)}
-                            className="p-1.5 bg-slate-800 rounded-lg text-blue-500 hover:text-blue-400 transition-colors"
-                            title="생산 완료"
-                          >
-                            <CheckCircle2 size={14} />
-                          </button>
-                        )}
-                        <button 
-                          onClick={() => handleDeleteProject(project.id)}
-                          className="p-1.5 bg-slate-800 rounded-lg text-slate-500 hover:text-rose-500 transition-colors"
-                          title="프로젝트 삭제"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                      <div>
-                        <h2 className="text-2xl font-black tracking-tight leading-none flex items-center gap-2">
-                          {project.name}
-                          {project.status === 'completed' && (
-                            <span className="text-[10px] bg-emerald-500 text-white px-2 py-0.5 rounded-full font-bold animate-pulse">
-                              생산완료 ({project.completedAt ? format(parseISO(project.completedAt), 'yyyy-MM-dd') : ''})
-                            </span>
+        {/* 2. FLOW VIEW (Exact Layout as Screenshot) */}
+        {currentView === 'flow' && (
+          <div className="space-y-6">
+            {flowData.projects
+              .filter((p) => (showFlowCompleted ? p.status === 'completed' : p.status !== 'completed'))
+              .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
+              .map((project, projIdx, arr) => {
+                const projectProcesses = flowData.processes.filter(
+                  (p) => p.projectId === project.id
+                );
+                const totalParts = flowData.processParts.filter((p) => p.projectId === project.id);
+                const completedParts = totalParts.filter((p) => p.completedAt).length;
+                const overallProgress =
+                  totalParts.length > 0
+                    ? Math.round((completedParts / totalParts.length) * 100)
+                    : 0;
+
+                const foDDay = getFoDDay(project.foDate);
+
+                return (
+                  <div
+                    key={project.id}
+                    className="bg-white rounded-2xl overflow-hidden shadow-md border border-slate-200/80"
+                  >
+                    {/* Project Dark Header matching Screenshot */}
+                    <div className="bg-[#071126] text-white p-4 sm:p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      {/* Left: Controls & Title & Stats */}
+                      <div className="flex items-start gap-3 sm:gap-4">
+                        {/* Control buttons (^, v, edit, complete, delete) */}
+                        <div className="flex items-center gap-1 bg-[#0f1d3d] p-1 rounded-xl border border-slate-700/60 shrink-0">
+                          {isMaster && (
+                            <>
+                              <button
+                                onClick={() => handleMoveProject(project.id, 'up')}
+                                disabled={projIdx === 0}
+                                className="p-1 rounded hover:bg-slate-700 text-slate-300 disabled:opacity-30"
+                                title="위로 이동"
+                              >
+                                <span className="font-bold text-xs">▲</span>
+                              </button>
+                              <button
+                                onClick={() => handleMoveProject(project.id, 'down')}
+                                disabled={projIdx === arr.length - 1}
+                                className="p-1 rounded hover:bg-slate-700 text-slate-300 disabled:opacity-30"
+                                title="아래로 이동"
+                              >
+                                <span className="font-bold text-xs">▼</span>
+                              </button>
+                            </>
                           )}
-                        </h2>
-                        <p className="text-slate-400 font-mono text-xs mt-1">{project.model}</p>
+
+                          <button
+                            onClick={() => setSelectedFlowProject(project)}
+                            className="p-1 rounded hover:bg-slate-700 text-emerald-400"
+                            title="수정"
+                          >
+                            <Save className="w-3.5 h-3.5" />
+                          </button>
+
+                          {(isMaster || userInitials === '5200') && (
+                            <button
+                              onClick={() => handleCompleteFlowProject(project.id)}
+                              className="p-1 rounded hover:bg-slate-700 text-sky-400"
+                              title="생산 완료"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+
+                          {isMaster && (
+                            <button
+                              onClick={() => handleDeleteFlowProject(project.id)}
+                              className="p-1 rounded hover:bg-rose-500/30 text-rose-400"
+                              title="삭제"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Title, Model, Progress, Quantity */}
+                        <div>
+                          <div className="flex items-baseline gap-2">
+                            <h2 className="text-xl sm:text-2xl font-black text-white tracking-wide">
+                              {project.name}
+                            </h2>
+                          </div>
+                          <p className="text-xs text-sky-400 font-semibold mt-0.5">
+                            {project.model}
+                          </p>
+
+                          <div className="flex items-center gap-6 mt-2">
+                            <div>
+                              <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                                PROGRESS
+                              </div>
+                              <div className="text-lg sm:text-xl font-black text-sky-400">
+                                {overallProgress}%
+                              </div>
+                            </div>
+                            <div>
+                              <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                                QTY
+                              </div>
+                              <div className="text-lg sm:text-xl font-black text-white">
+                                {project.targetQuantity?.toLocaleString() || 0}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                    <div className="text-right">
-                      <p className={cn("text-2xl font-black leading-none", !project.foDate ? "text-blue-400" : (foDDay < 0 ? "text-rose-500" : "text-blue-400"))}>
-                        {!project.foDate || foDDay === 0 ? 'D-0' : foDDay > 0 ? `D-${foDDay}` : `D+${Math.abs(foDDay)}`}
-                      </p>
-                      <div className="flex items-center justify-end gap-1 mt-1">
-                        {project.foDateHistory && project.foDateHistory.length > 0 && (
-                          <div className="flex gap-1">
-                            {project.foDateHistory.map((h, idx) => (
-                              <span key={idx} className="text-[10px] font-bold text-slate-400">
-                                {h.split('T')[0]}
+
+                      {/* Right: D-Day & FO Date History */}
+                      <div className="flex flex-col md:items-end justify-between">
+                        <div className="text-2xl sm:text-3xl font-black text-sky-400 tracking-tight">
+                          {foDDay}
+                        </div>
+                        <div className="flex items-center gap-2 mt-2 text-xs font-mono">
+                          {project.foDateHistory &&
+                            project.foDateHistory.map((d, i) => (
+                              <span key={i} className="text-slate-400">
+                                {d ? format(parseISO(d), 'yyyy-MM-dd') : ''}
                               </span>
                             ))}
-                          </div>
-                        )}
-                        <button 
-                          onClick={() => {
-                            if (project.status !== 'completed') {
-                              setSelectedProject(project);
+                          <span className="text-rose-500 font-bold">
+                            {project.foDate ? format(parseISO(project.foDate), 'yyyy-MM-dd') : '연도 - 월 - 일'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 8 Process Grid Cells (2 rows x 4 cols) matching Screenshot */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 border-t border-slate-100 divide-x divide-y divide-slate-100 bg-[#fffdfa]/40">
+                      {PROCESS_LIST.map((procName) => {
+                        const proc = projectProcesses.find((p) => p.name === procName);
+                        const procParts = flowData.processParts.filter(
+                          (p) => p.projectId === project.id && p.processName === procName
+                        );
+                        const procTasks = flowData.tasks.filter(
+                          (t) => t.projectId === project.id && t.processName === procName
+                        );
+                        const total = procParts.length + procTasks.length;
+                        const done =
+                          procParts.filter((p) => p.completedAt).length +
+                          procTasks.filter((t) => t.status === 'completed').length;
+                        const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+                        const dDay = getProcessDDay(proc?.targetDate);
+
+                        return (
+                          <div
+                            key={procName}
+                            onClick={() =>
+                              setSelectedProcess({ projectId: project.id, name: procName })
                             }
-                          }}
-                          className={cn(
-                            "text-[10px] font-black font-mono",
-                            project.status === 'completed' ? "text-slate-500 cursor-default" : (project.foDateHistory && project.foDateHistory.length > 0 ? "text-red-500 hover:text-red-400" : "text-slate-400 hover:text-blue-400")
-                          )}
-                        >
-                          {project.foDate ? project.foDate.split('T')[0] : '연도-월-일'}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="flex items-center justify-between border-t border-slate-800 pt-3 pb-2">
-                    <div className="flex gap-6">
-                      <div className="flex flex-col">
-                        <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">PROGRESS</span>
-                        <span className="text-lg font-black text-blue-400">{totalProgress}%</span>
-                      </div>
-                      <div className="flex flex-col">
-                        <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">QTY</span>
-                        <span className="text-lg font-black">{project.targetQuantity.toLocaleString()}</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Process Grid - No Horizontal Scroll */}
-                <div className="grid grid-cols-4 border-t border-slate-100">
-                  {PROCESS_LIST.map(name => {
-                    const proc = projectProcesses.find(p => p.name === name);
-                    const dDay = (proc && proc.targetDate) ? differenceInDays(parseISO(proc.targetDate), today) : 0;
-                    return (
-                      <div 
-                        key={name} 
-                        className={cn(
-                          "p-3 border-r border-b border-slate-100 last:border-r-0 flex flex-col items-center justify-between min-h-[100px]", 
-                          PROCESS_COLORS[name]
-                        )}
-                      >
-                        <div 
-                          className="text-[11px] font-black text-slate-600 uppercase tracking-tighter mb-1 cursor-pointer hover:text-blue-600"
-                          onClick={() => {
-                            setSelectedProcess({ projectId: project.id, name });
-                            setIsProcessModalOpen(true);
-                          }}
-                        >
-                          {name}
-                        </div>
-                        
-                        <div 
-                          className="text-3xl font-black text-slate-900 cursor-pointer active:scale-95 transition-transform"
-                          onClick={() => {
-                            setSelectedProcess({ projectId: project.id, name });
-                            setIsProcessModalOpen(true);
-                          }}
-                        >
-                          {proc?.progress || 0}<span className="text-xs font-bold text-slate-400 ml-0.5">%</span>
-                        </div>
-
-                        <div className="w-full mt-2 flex items-center justify-center gap-1">
-                          {proc?.targetDateHistory && proc.targetDateHistory.length > 0 && (
-                            <div className="flex flex-col items-end">
-                              {proc.targetDateHistory.map((h, idx) => (
-                                <div key={idx} className="text-[8px] font-black font-mono text-black leading-none">
-                                  {h.split('T')[0]}
-                                </div>
-                              ))}
+                            className="p-4 flex flex-col items-center justify-between text-center hover:bg-slate-50/80 transition-colors cursor-pointer min-h-[140px]"
+                          >
+                            <div className="text-xs font-bold text-slate-600 mb-1">
+                              {procName}
                             </div>
-                          )}
-                          <div className="flex flex-col items-center">
-                            <input 
-                              type="date" 
-                              value={proc?.targetDate.split('T')[0] || ''}
-                              onChange={(e) => proc && handleUpdateProcessDate(proc.id, new Date(e.target.value).toISOString())}
-                              className={cn(
-                                "text-[10px] font-black font-mono bg-transparent border-none p-0 focus:ring-0 cursor-pointer text-center w-full",
-                                proc?.targetDateHistory && proc.targetDateHistory.length > 0 ? "text-red-600" : "text-slate-500"
-                              )}
-                            />
-                            <div className={cn("text-xs font-black text-center mt-0.5", dDay < 0 ? "text-rose-500" : dDay === 0 ? "text-blue-600" : "text-slate-500")}>
-                              {dDay === 0 ? 'D-0' : dDay > 0 ? `-${dDay}` : `+${Math.abs(dDay)}`}
+
+                            <div className="flex items-baseline justify-center my-1">
+                              <span className="text-3xl sm:text-4xl font-black text-slate-900 leading-none">
+                                {pct}
+                              </span>
+                              <span className="text-xs font-bold text-slate-400 ml-0.5">%</span>
+                            </div>
+
+                            <div className="w-full space-y-1 mt-1">
+                              {/* Date Input / History */}
+                              <div
+                                className="flex items-center justify-center gap-1.5 text-xs text-slate-600 font-mono"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {proc?.targetDateHistory && proc.targetDateHistory.length > 0 && (
+                                  <span className="text-[10px] text-slate-400 line-through">
+                                    {format(parseISO(proc.targetDateHistory[proc.targetDateHistory.length - 1]), 'yyyy-MM-dd')}
+                                  </span>
+                                )}
+                                <input
+                                  type="date"
+                                  value={proc?.targetDate ? proc.targetDate.split('T')[0] : ''}
+                                  onChange={(e) => {
+                                    if (proc) {
+                                      handleUpdateProcessDate(
+                                        proc.id,
+                                        e.target.value ? new Date(e.target.value).toISOString() : ''
+                                      );
+                                    }
+                                  }}
+                                  disabled={project.status === 'completed'}
+                                  className={`text-[11px] font-bold border-none bg-transparent outline-none cursor-pointer text-center ${
+                                    proc?.targetDate ? (dDay.isRed ? 'text-rose-600' : 'text-slate-800') : 'text-slate-400'
+                                  }`}
+                                />
+                              </div>
+
+                              {/* D-Day badge at bottom */}
+                              <div
+                                className={`text-xs font-black ${
+                                  dDay.isRed ? 'text-rose-600' : 'text-sky-600'
+                                }`}
+                              >
+                                {dDay.label}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </main>
-      )}
-
-      {/* Modals */}
-      <AnimatePresence>
-        {isSettingsOpen && (
-          <SettingsModal 
-            users={users} 
-            persistData={persistData} 
-            onClose={() => setIsSettingsOpen(false)} 
-            showConfirm={showConfirm} 
-          />
-        )}
-        {isProjectModalOpen && (
-          <ProjectModal 
-            onClose={() => setIsProjectModalOpen(false)} 
-            onSubmit={handleCreateProject} 
-          />
-        )}
-        {selectedProject && (
-          <ProjectModal 
-            project={selectedProject}
-            onClose={() => setSelectedProject(null)} 
-            onSubmit={(data) => handleUpdateProject(selectedProject.id, data)} 
-          />
-        )}
-        {isProcessModalOpen && selectedProcess && (
-          <ProcessModal 
-            projectId={selectedProcess.projectId}
-            processName={selectedProcess.name}
-            tasks={tasks.filter(t => t.projectId === selectedProcess.projectId && t.processName === selectedProcess.name)}
-            processParts={processParts.filter(p => p.projectId === selectedProcess.projectId && p.processName === selectedProcess.name)}
-            processes={processes}
-            isReadOnly={projects.find(p => p.id === selectedProcess.projectId)?.status === 'completed'}
-            onClose={() => setIsProcessModalOpen(false)}
-            onAddTask={handleAddTask}
-            onUpdateTaskStatus={handleUpdateTaskStatus}
-            onUpdateTask={handleUpdateTask}
-            onAddPart={handleAddPart}
-            onDeletePart={handleDeletePart}
-            onUpdatePart={handleUpdatePart}
-            onBatchUpdateParts={handleBatchUpdateParts}
-            onDeleteParts={handleDeleteParts}
-            onUploadExcel={handleUploadExcel}
-            userInitials={userInitials || ''}
-            showAlert={showAlert}
-            showConfirm={showConfirm}
-            showPasswordPrompt={showPasswordPrompt}
-          />
-        )}
-      </AnimatePresence>
-
-      {/* Custom Modals */}
-      <AnimatePresence>
-        {passwordModal.isOpen && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9 }}
-              className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden"
-            >
-              <div className="p-6 text-center">
-                <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                  <Clock size={24} />
-                </div>
-                <h3 className="text-lg font-black text-slate-800 mb-1">{passwordModal.title}</h3>
-                <p className="text-slate-500 text-sm mb-6">{passwordModal.message}</p>
-                <input 
-                  type="password"
-                  autoFocus
-                  placeholder="비밀번호 입력"
-                  className="w-full px-4 py-3 rounded-xl border border-slate-200 outline-none focus:ring-2 focus:ring-blue-500 text-center text-xl tracking-widest mb-4"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      const val = (e.target as HTMLInputElement).value;
-                      setPasswordModal(prev => ({ ...prev, isOpen: false }));
-                      passwordModal.onConfirm(val);
-                    }
-                  }}
-                />
-                <div className="flex gap-2">
-                  <button 
-                    onClick={() => setPasswordModal(prev => ({ ...prev, isOpen: false }))}
-                    className="flex-1 px-4 py-3 bg-slate-100 text-slate-600 rounded-xl font-bold hover:bg-slate-200 transition-colors"
-                  >
-                    취소
-                  </button>
-                  <button 
-                    onClick={(e) => {
-                      const input = (e.currentTarget.parentElement?.previousElementSibling as HTMLInputElement);
-                      setPasswordModal(prev => ({ ...prev, isOpen: false }));
-                      passwordModal.onConfirm(input.value);
-                    }}
-                    className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-colors"
-                  >
-                    확인
-                  </button>
-                </div>
-              </div>
-            </motion.div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
           </div>
         )}
+      </main>
 
-        {alertModal.isOpen && (
-          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9 }}
-              className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden"
+      {/* User Management Modal (Master) */}
+      <UserManagementModal
+        isOpen={isUserManagementOpen}
+        users={flowData.users}
+        onClose={() => setIsUserManagementOpen(false)}
+        onSaveUsers={handleSaveUsersList}
+      />
+
+      {/* Flow Project Creation Modal */}
+      {isFlowProjectModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden text-slate-100"
+          >
+            <div className="px-6 py-4 bg-slate-800/60 border-b border-slate-800 flex items-center justify-between">
+              <h3 className="font-bold text-base text-slate-100">새 공정 프로젝트 생성</h3>
+              <button
+                onClick={() => setIsFlowProjectModalOpen(false)}
+                className="text-slate-400 hover:text-slate-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const form = e.target as any;
+                handleCreateFlowProject({
+                  name: form.name.value,
+                  model: form.model.value,
+                  targetQuantity: Number(form.targetQuantity.value || 0),
+                  foDate: form.foDate.value ? new Date(form.foDate.value).toISOString() : '',
+                });
+              }}
+              className="p-6 space-y-4 text-xs"
             >
-              <div className="p-6 text-center">
-                <div className={cn(
-                  "w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-4",
-                  alertModal.type === 'success' ? "bg-emerald-100 text-emerald-600" :
-                  alertModal.type === 'error' ? "bg-rose-100 text-rose-600" : "bg-blue-100 text-blue-600"
-                )}>
-                  {alertModal.type === 'success' ? <CheckCircle2 size={24} /> :
-                   alertModal.type === 'error' ? <AlertCircle size={24} /> : <AlertCircle size={24} />}
-                </div>
-                <h3 className="text-lg font-black text-slate-800 mb-1">{alertModal.title}</h3>
-                <p className="text-slate-500 text-sm mb-6">{alertModal.message}</p>
-                <button 
-                  onClick={() => setAlertModal(prev => ({ ...prev, isOpen: false }))}
-                  className="w-full px-4 py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-slate-800 transition-colors"
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">프로젝트명</label>
+                <input
+                  name="name"
+                  type="text"
+                  required
+                  placeholder="예: CPH-329R3"
+                  className="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+                />
+              </div>
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">모델명</label>
+                <input
+                  name="model"
+                  type="text"
+                  required
+                  placeholder="예: EF-510"
+                  className="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+                />
+              </div>
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">생산수량</label>
+                <input
+                  name="targetQuantity"
+                  type="number"
+                  defaultValue={5000}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+                />
+              </div>
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">FO 선적 날짜</label>
+                <input
+                  name="foDate"
+                  type="date"
+                  className="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 [color-scheme:dark]"
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsFlowProjectModalOpen(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-semibold hover:bg-slate-700"
                 >
-                  확인
+                  취소
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold"
+                >
+                  생성하기
                 </button>
               </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Flow Project Edit Modal */}
+      {selectedFlowProject && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden text-slate-100"
+          >
+            <div className="px-6 py-4 bg-slate-800/60 border-b border-slate-800 flex items-center justify-between">
+              <h3 className="font-bold text-base text-slate-100">프로젝트 정보 수정</h3>
+              <button
+                onClick={() => setSelectedFlowProject(null)}
+                className="text-slate-400 hover:text-slate-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const form = e.target as any;
+                handleUpdateFlowProject(selectedFlowProject.id, {
+                  name: form.name.value,
+                  model: form.model.value,
+                  targetQuantity: Number(form.targetQuantity.value || 0),
+                  foDate: form.foDate.value ? new Date(form.foDate.value).toISOString() : '',
+                });
+              }}
+              className="p-6 space-y-4 text-xs"
+            >
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">프로젝트명</label>
+                <input
+                  name="name"
+                  type="text"
+                  required
+                  defaultValue={selectedFlowProject.name}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+                />
+              </div>
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">모델명</label>
+                <input
+                  name="model"
+                  type="text"
+                  required
+                  defaultValue={selectedFlowProject.model}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+                />
+              </div>
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">생산수량</label>
+                <input
+                  name="targetQuantity"
+                  type="number"
+                  defaultValue={selectedFlowProject.targetQuantity}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+                />
+              </div>
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">FO 선적 날짜</label>
+                <input
+                  name="foDate"
+                  type="date"
+                  defaultValue={selectedFlowProject.foDate ? selectedFlowProject.foDate.split('T')[0] : ''}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 [color-scheme:dark]"
+                />
+              </div>
+              {selectedFlowProject.foDateHistory && selectedFlowProject.foDateHistory.length > 0 && (
+                <div className="p-2.5 rounded-xl bg-slate-800/80 border border-slate-700/60">
+                  <div className="text-[11px] font-semibold text-amber-400 mb-1">이전 선적일 변경 이력:</div>
+                  <div className="space-y-0.5 text-[11px] text-slate-300 font-mono">
+                    {selectedFlowProject.foDateHistory.map((h, i) => (
+                      <div key={i}>
+                        {i + 1}. {h ? format(parseISO(h), 'yyyy-MM-dd') : '미정'}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setSelectedFlowProject(null)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-semibold hover:bg-slate-700"
+                >
+                  취소
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold"
+                >
+                  저장하기
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Flow Process Detail Modal */}
+      {selectedProcess && (
+        <ProcessDetailModal
+          projectId={selectedProcess.projectId}
+          processName={selectedProcess.name}
+          tasks={flowData.tasks}
+          processParts={flowData.processParts}
+          processes={flowData.processes}
+          onClose={() => setSelectedProcess(null)}
+          onAddTask={handleAddTask}
+          onUpdateTaskStatus={handleUpdateTaskStatus}
+          onUpdateTask={handleUpdateTask}
+          onAddPart={handleAddPart}
+          onDeletePart={handleDeletePart}
+          onUpdatePart={handleUpdatePart}
+          onBatchUpdateParts={handleBatchUpdateParts}
+          onDeleteParts={handleDeleteParts}
+          onUploadExcel={handleUploadExcel}
+          userInitials={userInitials}
+          showAlert={showAlert}
+          showConfirm={showConfirm}
+          showPasswordPrompt={showPasswordPrompt}
+        />
+      )}
+
+      {/* Alert & Confirm Modals */}
+      <AnimatePresence>
+        {alertModal.isOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden p-6 text-center"
+            >
+              <div
+                className={`w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-3 ${
+                  alertModal.type === 'success'
+                    ? 'bg-emerald-500/20 text-emerald-400'
+                    : alertModal.type === 'error'
+                    ? 'bg-rose-500/20 text-rose-400'
+                    : 'bg-sky-500/20 text-sky-400'
+                }`}
+              >
+                <AlertCircle className="w-6 h-6" />
+              </div>
+              <h3 className="text-base font-bold text-slate-100 mb-1">{alertModal.title}</h3>
+              <p className="text-xs text-slate-400 mb-5">{alertModal.message}</p>
+              <button
+                onClick={() => setAlertModal((prev) => ({ ...prev, isOpen: false }))}
+                className="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs transition-colors"
+              >
+                확인
+              </button>
             </motion.div>
           </div>
         )}
 
         {confirmModal.isOpen && (
-          <div className="fixed inset-0 z-[105] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.9 }}
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9 }}
-              className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden"
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden p-6 text-center"
             >
-              <div className="p-6 text-center">
-                <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                  <AlertCircle size={24} />
-                </div>
-                <h3 className="text-lg font-black text-slate-800 mb-1">{confirmModal.title}</h3>
-                <p className="text-slate-500 text-sm mb-6">{confirmModal.message}</p>
-                <div className="flex gap-2">
-                  <button 
-                    onClick={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
-                    className="flex-1 px-4 py-3 bg-slate-100 text-slate-600 rounded-xl font-bold hover:bg-slate-200 transition-colors"
-                  >
-                    취소
-                  </button>
-                  <button 
-                    onClick={() => {
-                      setConfirmModal(prev => ({ ...prev, isOpen: false }));
-                      confirmModal.onConfirm();
-                    }}
-                    className="flex-1 px-4 py-3 bg-rose-600 text-white rounded-xl font-bold hover:bg-rose-700 transition-colors"
-                  >
-                    최종 확인
-                  </button>
-                </div>
+              <div className="w-12 h-12 rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center mx-auto mb-3">
+                <AlertCircle className="w-6 h-6" />
+              </div>
+              <h3 className="text-base font-bold text-slate-100 mb-1">{confirmModal.title}</h3>
+              <p className="text-xs text-slate-400 mb-5">{confirmModal.message}</p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setConfirmModal((prev) => ({ ...prev, isOpen: false }))}
+                  className="flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs transition-colors"
+                >
+                  취소
+                </button>
+                <button
+                  onClick={() => {
+                    setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+                    confirmModal.onConfirm();
+                  }}
+                  className="flex-1 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-semibold text-xs transition-colors shadow-sm"
+                >
+                  확인
+                </button>
               </div>
             </motion.div>
           </div>
@@ -1736,150 +1498,102 @@ function Dashboard({ initialData, persistData, refreshData }: {
   );
 }
 
-// Modal Components
-const ProjectModal = ({ project, onClose, onSubmit }: { 
-  project?: Project, 
-  onClose: () => void, 
-  onSubmit: (data: any) => void 
+// Process Detail Modal wrapper
+const ProcessDetailModal = ({
+  projectId,
+  processName,
+  tasks,
+  processParts,
+  processes,
+  isReadOnly,
+  onClose,
+  onAddTask,
+  onUpdateTaskStatus,
+  onUpdateTask,
+  onAddPart,
+  onDeletePart,
+  onUpdatePart,
+  onBatchUpdateParts,
+  onDeleteParts,
+  onUploadExcel,
+  userInitials,
+  showAlert,
+  showConfirm,
+  showPasswordPrompt,
+}: {
+  projectId: string;
+  processName: string;
+  tasks: Task[];
+  processParts: ProcessPart[];
+  processes: Process[];
+  isReadOnly?: boolean;
+  onClose: () => void;
+  onAddTask: (pid: string, pname: string, type: string, desc: string) => void;
+  onUpdateTaskStatus: (tid: string, status: TaskStatus, pid: string, pname: string) => void;
+  onUpdateTask: (tid: string, data: Partial<Task>, pid: string, pname: string) => void;
+  onAddPart: (projectId: string, processName: string, data: Partial<ProcessPart>) => void;
+  onDeletePart: (partId: string, projectId: string, processName: string) => void;
+  onUpdatePart: (partId: string, data: Partial<ProcessPart>, projectId: string, processName: string) => void;
+  onBatchUpdateParts: (updates: { id: string; data: Partial<ProcessPart> }[], projectId: string, processName: string) => void;
+  onDeleteParts: (projectId: string, processName: string) => void;
+  onUploadExcel: (projectId: string, processName: string, file: File) => void;
+  userInitials: string;
+  showAlert: (title: string, message: string, type?: 'info' | 'error' | 'success') => void;
+  showConfirm: (title: string, message: string, onConfirm: () => void) => void;
+  showPasswordPrompt: (title: string, message: string, onConfirm: (password: string) => void) => void;
 }) => {
-  const [name, setName] = useState(project?.name || '');
-  const [model, setModel] = useState(project?.model || '');
-  const [quantity, setQuantity] = useState(project?.targetQuantity || 5000);
-  const [foDate, setFoDate] = useState(project?.foDate?.split('T')[0] || '');
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
-      <motion.div 
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        exit={{ opacity: 0, scale: 0.95 }}
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
-      >
-        <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-          <h3 className="font-bold text-slate-800">{project ? '프로젝트 수정' : '새 프로젝트 생성'}</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">닫기</button>
-        </div>
-        <div className="p-6 space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-600 mb-1">프로젝트명</label>
-            <input 
-              type="text" 
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full px-4 py-2 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="예: CPH-329R3"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-600 mb-1">모델명</label>
-            <input 
-              type="text" 
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              className="w-full px-4 py-2 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="예: EF-510"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-600 mb-1">생산수량 (CH)</label>
-            <input 
-              type="number" 
-              value={quantity}
-              onChange={(e) => setQuantity(Number(e.target.value))}
-              className="w-full px-4 py-2 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-600 mb-1">팩토리 아웃 (FO) 날짜</label>
-            <input 
-              type="date" 
-              value={foDate}
-              onChange={(e) => setFoDate(e.target.value)}
-              className="w-full px-4 py-2 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          <button 
-            onClick={() => onSubmit({ name, model, targetQuantity: quantity, foDate: foDate ? new Date(foDate).toISOString() : '' })}
-            className="w-full bg-blue-600 text-white py-2 rounded-lg font-bold hover:bg-blue-700 transition-colors"
-          >
-            {project ? '수정 완료' : '생성하기'}
-          </button>
-        </div>
-      </motion.div>
-    </div>
-  );
-};
-
-import * as Processes from './processes';
-
-const ProcessModal = ({ projectId, processName, tasks, processParts, processes, isReadOnly, onClose, onAddTask, onUpdateTaskStatus, onUpdateTask, onAddPart, onDeletePart, onUpdatePart, onBatchUpdateParts, onDeleteParts, onUploadExcel, userInitials, showAlert, showConfirm, showPasswordPrompt }: {
-  projectId: string,
-  processName: string,
-  tasks: Task[],
-  processParts: ProcessPart[],
-  processes: Process[],
-  isReadOnly?: boolean,
-  onClose: () => void,
-  onAddTask: (pid: string, pname: string, type: string, desc: string) => void,
-  onUpdateTaskStatus: (tid: string, status: TaskStatus, pid: string, pname: string) => void,
-  onUpdateTask: (tid: string, data: Partial<Task>, pid: string, pname: string) => void,
-  onAddPart: (projectId: string, processName: string, data: Partial<ProcessPart>) => void,
-  onDeletePart: (partId: string, projectId: string, processName: string) => void,
-  onUpdatePart: (partId: string, data: Partial<ProcessPart>, projectId: string, processName: string) => void,
-  onBatchUpdateParts: (updates: { id: string, data: Partial<ProcessPart> }[], projectId: string, processName: string) => void,
-  onDeleteParts: (projectId: string, processName: string) => void,
-  onUploadExcel: (projectId: string, processName: string, file: File) => void,
-  userInitials: string,
-  showAlert: (title: string, message: string, type?: 'info' | 'error' | 'success') => void,
-  showConfirm: (title: string, message: string, onConfirm: () => void) => void,
-  showPasswordPrompt: (title: string, message: string, onConfirm: (password: string) => void) => void
-}) => {
-  const progress = (() => {
-    const totalItems = processParts.length + tasks.length;
-    if (totalItems === 0) return 0;
-    const completedParts = processParts.filter(p => p.completedAt).length;
-    const completedTasks = tasks.filter(t => t.status === 'completed').length;
-    return Math.round(((completedParts + completedTasks) / totalItems) * 100);
-  })();
-
-  // Map process name to component
-  const ProcessComponent = (() => {
-    switch (processName) {
-      case '사출': return Processes.Injection;
-      case '인쇄': return Processes.Printing;
-      case '메탈': return Processes.Metal;
-      case 'PAINT': return Processes.Paint;
-      case 'PRINT': return Processes.Print;
-      case '가공': return Processes.Processing;
-      case '조립': return Processes.Assembly;
-      case '포장': return Processes.Packaging;
-      default: return null;
-    }
-  })();
-
-  const currentProcess = processes.find(p => p.projectId === projectId && p.name === processName);
+  const currentProcess = processes.find((p) => p.projectId === projectId && p.name === processName);
   const headers = currentProcess?.headers;
   const excelTitle = currentProcess?.excelTitle;
 
+  const ProcessComponent = (() => {
+    switch (processName) {
+      case '사출':
+        return Processes.Injection;
+      case '인쇄':
+        return Processes.Printing;
+      case '메탈':
+        return Processes.Metal;
+      case 'PAINT':
+        return Processes.Paint;
+      case 'PRINT':
+        return Processes.Print;
+      case '가공':
+        return Processes.Processing;
+      case '조립':
+        return Processes.Assembly;
+      case '포장':
+        return Processes.Packaging;
+      default:
+        return null;
+    }
+  })();
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
-      <motion.div 
-        initial={{ opacity: 0, y: 20 }}
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/80 backdrop-blur-sm">
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: 20 }}
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl overflow-hidden flex flex-col max-h-[90vh]"
+        exit={{ opacity: 0, y: 16 }}
+        className="bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl w-full max-w-6xl overflow-hidden flex flex-col max-h-[92vh]"
       >
-        <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <h3 className="font-bold text-slate-800 text-xl">{processName} 공정 상세</h3>
-            <span className="bg-blue-100 text-blue-600 px-2 py-0.5 rounded text-base font-bold">{progress}%</span>
+        <div className="px-5 py-3.5 bg-slate-800/80 border-b border-slate-700/80 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2.5">
+            <h3 className="font-bold text-slate-100 text-base sm:text-lg">
+              {processName} 공정 세부 관리
+            </h3>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-2xl">닫기</button>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-700 transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
-        
-        <div className="p-6 overflow-y-auto flex-1">
+
+        <div className="p-4 sm:p-6 overflow-y-auto flex-1 bg-slate-950 text-slate-100">
           {ProcessComponent ? (
-            <ProcessComponent 
+            <ProcessComponent
               projectId={projectId}
               processName={processName as ProcessName}
               tasks={tasks}
@@ -1902,11 +1616,12 @@ const ProcessModal = ({ projectId, processName, tasks, processParts, processes, 
               showPasswordPrompt={showPasswordPrompt}
             />
           ) : (
-            <div className="text-center py-8 text-slate-400">공정 정보를 찾을 수 없습니다.</div>
+            <div className="text-center py-8 text-slate-400 text-xs">
+              공정 컴포넌트를 찾을 수 없습니다.
+            </div>
           )}
         </div>
       </motion.div>
     </div>
   );
 };
-

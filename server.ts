@@ -4,173 +4,23 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
-import multer from "multer";
 import redis from "./src/lib/redis.ts";
+import { uploadToR2, deleteFromR2, getFromR2 } from "./src/lib/r2Server.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const REDIS_FLOW_KEY = "ajin_flow26_Backup";
-const REDIS_INFO_KEY = "ajin_info26";
+const FLOW_REDIS_KEY = "ajin_flow26_Backup";
+const INFO_REDIS_KEY = "ajin-info-files26";
 
-// Safe Unicode-aware filename cleaner
-function cleanAndSafeFilename(rawName: string): string {
-  if (!rawName) return 'file';
-  let name = rawName;
-  try {
-    if (/^[\x00-\xFF]+$/.test(name) && /[\x80-\xFF]/.test(name)) {
-      const candidate = Buffer.from(name, 'latin1').toString('utf8');
-      if (!candidate.includes('\uFFFD') && candidate.length > 0) {
-        name = candidate;
-      }
-    }
-  } catch {}
+// Ensure local upload folders exist as fallback
+const UPLOADS_BASE = path.join(process.cwd(), "uploads");
+const FOLDERS = ["info-pdf", "info-excel", "info-image"];
 
-  // Strip only dangerous characters: \ / : * ? " < > | \r \n \t
-  // Preserve Korean, Japanese, Kanji (系, 形), Ampersand (&), brackets (), spaces, dashes, commas, etc.
-  const cleaned = name.replace(/[\\/:*?"<>|\r\n\t]/g, '_').trim();
-  return cleaned || 'file';
-}
-
-// Sync uploaded file to Upstash Redis in chunks for multi-device/multi-container cloud persistence
-async function syncFileToRedis(fileKey: string, filePath: string, originalName: string, mimeType: string) {
-  try {
-    if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) return;
-    if (!fs.existsSync(filePath)) return;
-    const fileBuffer = await fs.promises.readFile(filePath);
-    if (fileBuffer.length === 0) return;
-
-    const CHUNK_SIZE = 450 * 1024; // 450KB chunk size
-    const totalChunks = Math.ceil(fileBuffer.length / CHUNK_SIZE);
-    const cleanOrig = cleanAndSafeFilename(originalName);
-    const savedBasename = path.basename(filePath);
-
-    const meta = {
-      key: fileKey,
-      filename: savedBasename,
-      originalName: cleanOrig,
-      mimeType: mimeType || 'application/octet-stream',
-      size: fileBuffer.length,
-      chunks: totalChunks,
-      updatedAt: new Date().toISOString()
-    };
-
-    // Save metadata under fileKey, saved filename, and clean original name
-    await Promise.all([
-      redis.set(`file_meta:${fileKey}`, meta),
-      redis.set(`file_meta:${savedBasename}`, meta),
-      redis.set(`file_meta:${cleanOrig}`, meta)
-    ]);
-
-    // Save chunks under primary fileKey
-    for (let i = 0; i < totalChunks; i += 10) {
-      const batch = [];
-      for (let j = i; j < Math.min(i + 10, totalChunks); j++) {
-        const start = j * CHUNK_SIZE;
-        const end = Math.min(start + CHUNK_SIZE, fileBuffer.length);
-        const chunkData = fileBuffer.subarray(start, end).toString('base64');
-        batch.push(redis.set(`file_chunk:${fileKey}:${j}`, chunkData));
-      }
-      await Promise.all(batch);
-    }
-    console.log(`Successfully synced file to Redis: ${fileKey} (${fileBuffer.length} bytes, ${totalChunks} chunks)`);
-  } catch (err) {
-    console.warn(`Failed to sync file to Redis (${fileKey}):`, err);
-  }
-}
-
-function sampleSubarray(buf: Buffer, start: number, end: number): Buffer {
-  return buf.subarray(start, end);
-}
-
-// Helper to normalize strings for robust fuzzy comparison (removes spaces, underscores, timestamps, case)
-function normalizeName(str: string): string {
-  if (!str) return '';
-  return str
-    .replace(/^\d+[_]/, '') // remove timestamp prefix
-    .replace(/[\s\-_()[\]]/g, '') // remove spaces, dashes, brackets
-    .toLowerCase();
-}
-
-// Restore missing file from Upstash Redis chunks to local disk
-async function restoreFileFromRedis(fileKey: string, targetPath: string): Promise<boolean> {
-  try {
-    if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) return false;
-    
-    // 1. Direct lookups
-    let meta: any = await redis.get(`file_meta:${fileKey}`).catch(() => null);
-    if (!meta) {
-      meta = await redis.get(`file_meta:${path.basename(fileKey)}`).catch(() => null);
-    }
-    if (!meta) {
-      try {
-        const decoded = decodeURIComponent(fileKey);
-        meta = await redis.get(`file_meta:${decoded}`).catch(() => null);
-        if (!meta) {
-          meta = await redis.get(`file_meta:${cleanAndSafeFilename(decoded)}`).catch(() => null);
-        }
-      } catch {}
-    }
-
-    // 2. Intelligent fuzzy match if direct lookup failed
-    if (!meta || !meta.chunks) {
-      try {
-        const allMetaKeys = await redis.keys("file_meta:*");
-        const normKey = normalizeName(fileKey);
-
-        for (const mk of allMetaKeys) {
-          const candidateMeta: any = await redis.get(mk);
-          if (!candidateMeta || !candidateMeta.chunks) continue;
-
-          const normCandidateFilename = normalizeName(candidateMeta.filename || '');
-          const normCandidateOriginal = normalizeName(candidateMeta.originalName || '');
-          const normMetaKey = normalizeName(mk.replace('file_meta:', ''));
-
-          if (
-            normKey === normCandidateFilename ||
-            normKey === normCandidateOriginal ||
-            normKey === normMetaKey ||
-            (normKey.length > 5 && normCandidateOriginal.includes(normKey)) ||
-            (normCandidateOriginal.length > 5 && normKey.includes(normCandidateOriginal))
-          ) {
-            meta = candidateMeta;
-            console.log(`Fuzzy matched fileKey "${fileKey}" to Redis meta "${candidateMeta.filename || candidateMeta.originalName}"`);
-            break;
-          }
-        }
-      } catch (fuzzyErr) {
-        console.warn("Fuzzy meta search error:", fuzzyErr);
-      }
-    }
-
-    if (!meta || !meta.chunks) return false;
-
-    const effectiveKey = meta.key || meta.filename || fileKey;
-    const chunkKeys = Array.from({ length: meta.chunks }, (_, i) => `file_chunk:${effectiveKey}:${i}`);
-    
-    // Read chunks in batches of 15
-    const chunksData: any[] = [];
-    for (let i = 0; i < chunkKeys.length; i += 15) {
-      const batchKeys = chunkKeys.slice(i, i + 15);
-      const batchRes = await Promise.all(batchKeys.map(k => redis.get(k)));
-      chunksData.push(...batchRes);
-    }
-
-    const buffers: Buffer[] = [];
-    for (const chunkBase64 of chunksData) {
-      if (!chunkBase64 || typeof chunkBase64 !== 'string') return false;
-      buffers.push(Buffer.from(chunkBase64, 'base64'));
-    }
-
-    const fullBuffer = Buffer.concat(buffers);
-    if (fullBuffer.length === 0) return false;
-
-    await fs.promises.writeFile(targetPath, fullBuffer);
-    console.log(`Restored missing file from Redis to disk: ${targetPath} (${fullBuffer.length} bytes)`);
-    return true;
-  } catch (err) {
-    console.warn(`Failed to restore file from Redis (${fileKey}):`, err);
-    return false;
+for (const folder of FOLDERS) {
+  const dir = path.join(UPLOADS_BASE, folder);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
   }
 }
 
@@ -178,582 +28,110 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // CORS & Preflight handling
-  app.use((req, res, next) => {
-    res.header("Access-Control-Allow-Origin", "*");
-    res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
-    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, X-File-Name, X-File-Id");
-    if (req.method === "OPTIONS") {
-      return res.sendStatus(200);
-    }
-    next();
-  });
-
-  // Ensure uploads directory exists
-  const uploadsDir = path.join(process.cwd(), 'uploads');
-  if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir, { recursive: true });
-  }
-
-  // 1. Raw Binary Streaming Endpoint (Pipes directly to disk)
-  app.all("/api/upload-raw", (req, res) => {
-    if (req.method === "OPTIONS") return res.sendStatus(200);
-    if (req.method === "GET") return res.json({ status: "ready" });
-
-    try {
-      let rawName = (req.query.filename as string) || (req.headers['x-file-name'] as string) || 'file';
-      const fileId = (req.query.fileId as string) || (req.headers['x-file-id'] as string) || `${Date.now()}`;
-      try { rawName = decodeURIComponent(rawName); } catch {}
-
-      const cleanName = cleanAndSafeFilename(rawName);
-      const timestamp = Date.now();
-      const savedFileName = `${timestamp}_${cleanName}`;
-      const filePath = path.join(uploadsDir, savedFileName);
-
-      const writeStream = fs.createWriteStream(filePath);
-      req.pipe(writeStream);
-
-      writeStream.on('finish', async () => {
-        try {
-          const stats = fs.statSync(filePath);
-          const fileUrl = `/uploads/${encodeURIComponent(savedFileName)}`;
-          
-          // Await Redis chunk sync so data is guaranteed to be saved in cloud storage before returning
-          await syncFileToRedis(fileId, filePath, cleanName, req.headers['content-type'] || 'application/octet-stream');
-          await syncFileToRedis(savedFileName, filePath, cleanName, req.headers['content-type'] || 'application/octet-stream');
-
-          return res.json({
-            success: true,
-            url: fileUrl,
-            filename: savedFileName,
-            originalName: cleanName,
-            size: stats.size,
-            fileId
-          });
-        } catch (e: any) {
-          return res.json({
-            success: true,
-            url: `/uploads/${encodeURIComponent(savedFileName)}`,
-            filename: savedFileName,
-            originalName: cleanName,
-            size: 0,
-            fileId
-          });
-        }
-      });
-
-      writeStream.on('error', (err) => {
-        console.error("Stream write error:", err);
-        return res.status(500).json({ success: false, error: err.message || "파일 스트림 저장 오류" });
-      });
-    } catch (err: any) {
-      console.error("upload-raw error:", err);
-      return res.status(500).json({ success: false, error: err.message || "파일 업로드 처리 오류" });
-    }
-  });
-
-  // Body parser limits for JSON and form requests (must be before JSON endpoints)
-  app.use(express.json({ limit: '100mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '100mb' }));
-
-  // 1-B. High-reliability Chunked Upload Endpoint
-  app.post("/api/upload-chunk", async (req, res) => {
-    try {
-      const { fileId, chunkIndex, totalChunks, filename, mimeType, dataBase64, totalSize } = req.body || {};
-      if (!fileId || chunkIndex === undefined || !totalChunks || !dataBase64) {
-        return res.status(400).json({ success: false, error: "잘못된 청크 업로드 매개변수입니다." });
-      }
-
-      // Store chunk in Redis
-      await redis.set(`file_chunk:${fileId}:${chunkIndex}`, dataBase64);
-
-      // If last chunk, finalize file
-      if (chunkIndex === totalChunks - 1) {
-        const cleanOrig = cleanAndSafeFilename(filename || 'file');
-        const timestamp = Date.now();
-        const savedFileName = `${timestamp}_${cleanOrig}`;
-        const filePath = path.join(uploadsDir, savedFileName);
-
-        // Fetch all chunks and assemble
-        const chunkKeys = Array.from({ length: totalChunks }, (_, i) => `file_chunk:${fileId}:${i}`);
-        const chunksData: any[] = [];
-        for (let i = 0; i < chunkKeys.length; i += 15) {
-          const batch = chunkKeys.slice(i, i + 15);
-          const resArr = await Promise.all(batch.map(k => redis.get(k)));
-          chunksData.push(...resArr);
-        }
-
-        const buffers = chunksData.map(c => Buffer.from(c || '', 'base64'));
-        const fullBuffer = Buffer.concat(buffers);
-
-        await fs.promises.writeFile(filePath, fullBuffer);
-
-        const meta = {
-          key: fileId,
-          filename: savedFileName,
-          originalName: cleanOrig,
-          mimeType: mimeType || 'application/octet-stream',
-          size: fullBuffer.length,
-          chunks: totalChunks,
-          updatedAt: new Date().toISOString()
-        };
-
-        await Promise.all([
-          redis.set(`file_meta:${fileId}`, meta),
-          redis.set(`file_meta:${savedFileName}`, meta),
-          redis.set(`file_meta:${cleanOrig}`, meta)
-        ]);
-
-        console.log(`Finalized chunked upload: ${cleanOrig} (${fullBuffer.length} bytes, ${totalChunks} chunks)`);
-
-        return res.json({
-          success: true,
-          done: true,
-          url: `/uploads/${encodeURIComponent(savedFileName)}`,
-          fileId,
-          filename: savedFileName,
-          originalName: cleanOrig,
-          size: fullBuffer.length
-        });
-      }
-
-      return res.json({ success: true, done: false, chunkIndex });
-    } catch (err: any) {
-      console.error("upload-chunk error:", err);
-      return res.status(500).json({ success: false, error: err.message || "청크 업로드 오류" });
-    }
-  });
-
-  // Multer configuration for streaming direct binary uploads up to 100MB
-  const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-      cb(null, uploadsDir);
-    },
-    filename: (req, file, cb) => {
-      const cleanName = cleanAndSafeFilename(file.originalname);
-      const timestamp = Date.now();
-      cb(null, `${timestamp}_${cleanName}`);
-    }
-  });
-
-  const upload = multer({
-    storage,
-    limits: { fileSize: 100 * 1024 * 1024 } // 100MB per file limit
-  });
-
-  // Safe wrapper for multer middleware
-  const handleUploadMiddleware = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    upload.single('file')(req, res, (err) => {
-      if (err) {
-        console.error("Multer upload error:", err);
-        return res.status(400).json({ success: false, error: err.message || "파일 업로드 처리 오류" });
-      }
-      next();
-    });
-  };
-
-  // Dedicated API file streaming endpoint (Resolves from disk or auto-restores from Redis)
-  app.get(['/api/file/:fileKey', '/api/files/:fileKey'], async (req, res) => {
-    try {
-      const fileKey = req.params.fileKey;
-      let decodedKey = fileKey;
-      try { decodedKey = decodeURIComponent(fileKey); } catch {}
-      const cleanKey = cleanAndSafeFilename(decodedKey);
-
-      let targetPath = path.join(uploadsDir, decodedKey);
-      if (!fs.existsSync(targetPath)) {
-        targetPath = path.join(uploadsDir, fileKey);
-      }
-
-      // Check if file exists on disk
-      let exists = fs.existsSync(targetPath) && fs.statSync(targetPath).isFile();
-      
-      // If not on disk, search uploads directory for matches
-      if (!exists) {
-        const files = fs.readdirSync(uploadsDir);
-        const match = files.find(f => 
-          f === decodedKey || 
-          f === fileKey || 
-          f.includes(cleanKey) || 
-          f.includes(decodedKey) || 
-          encodeURIComponent(f) === fileKey
-        );
-        if (match) {
-          targetPath = path.join(uploadsDir, match);
-          exists = true;
-        }
-      }
-
-      // If still not on disk, check if fileKey is an infoFile ID in flowData to find its real name
-      let possibleNames: string[] = [decodedKey, fileKey, cleanKey];
-      try {
-        const flowData: any = await redis.get("ajin_flow26_Backup").catch(() => null);
-        const allFiles = (flowData?.infoProjects || []).flatMap((p: any) => p.files || []);
-        const matched = allFiles.find((f: any) => f.id === fileKey || f.id === decodedKey);
-        if (matched?.name) {
-          possibleNames.push(matched.name);
-          possibleNames.push(cleanAndSafeFilename(matched.name));
-        }
-      } catch {}
-
-      // Search disk for possible names
-      if (!exists) {
-        const files = fs.readdirSync(uploadsDir);
-        for (const pname of possibleNames) {
-          const match = files.find(f => f.includes(pname) || f.endsWith(pname));
-          if (match) {
-            targetPath = path.join(uploadsDir, match);
-            exists = true;
-            break;
-          }
-        }
-      }
-
-      // If still not on disk, auto-restore from Redis using all possible keys
-      if (!exists) {
-        for (const k of possibleNames) {
-          const restored = await restoreFileFromRedis(k, path.join(uploadsDir, cleanAndSafeFilename(k)));
-          if (restored) {
-            targetPath = path.join(uploadsDir, cleanAndSafeFilename(k));
-            exists = true;
-            break;
-          }
-        }
-      }
-
-      if (exists) {
-        let mimeType = '';
-        try {
-          const meta: any = await redis.get(`file_meta:${fileKey}`).catch(() => null);
-          if (meta?.mimeType && meta.mimeType !== 'application/octet-stream') {
-            mimeType = meta.mimeType;
-          }
-        } catch {}
-
-        if (!mimeType) {
-          const ext = path.extname(targetPath).toLowerCase();
-          if (ext === '.pdf' || targetPath.endsWith('.pdf')) {
-            mimeType = 'application/pdf';
-          } else if (ext === '.xlsx' || targetPath.endsWith('.xlsx')) {
-            mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-          } else if (ext === '.xls' || targetPath.endsWith('.xls')) {
-            mimeType = 'application/vnd.ms-excel';
-          } else if (['.jpg', '.jpeg'].some(e => targetPath.endsWith(e))) {
-            mimeType = 'image/jpeg';
-          } else if (ext === '.png' || targetPath.endsWith('.png')) {
-            mimeType = 'image/png';
-          } else if (ext === '.webp' || targetPath.endsWith('.webp')) {
-            mimeType = 'image/webp';
-          } else {
-            mimeType = 'application/octet-stream';
-          }
-        }
-
-        res.setHeader('Content-Type', mimeType);
-        const stat = fs.statSync(targetPath);
-        res.setHeader('Content-Length', stat.size);
-        res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(path.basename(targetPath))}`);
-        res.setHeader('Cache-Control', 'public, max-age=86400');
-        
-        const readStream = fs.createReadStream(targetPath);
-        readStream.on('error', (err) => {
-          console.error("Stream read error:", err);
-          if (!res.headersSent) res.status(500).json({ error: "File read error" });
-        });
-        return readStream.pipe(res);
-      }
-
-      return res.status(404).json({ error: '파일을 찾을 수 없습니다.' });
-    } catch (err: any) {
-      console.error('API file serve error:', err);
-      return res.status(500).json({ error: err?.message || 'File serve error' });
-    }
-  });
-
-  // Serve uploaded files explicitly with Unicode and UTF-8 header support & auto-restore from Redis
-  app.get('/uploads/:filename', async (req, res) => {
-    try {
-      const rawParam = req.params.filename;
-      let decodedFilename = rawParam;
-      try {
-        decodedFilename = decodeURIComponent(rawParam);
-      } catch {}
-      const cleanName = cleanAndSafeFilename(decodedFilename);
-
-      let targetPath = path.join(uploadsDir, decodedFilename);
-      if (!fs.existsSync(targetPath)) {
-        targetPath = path.join(uploadsDir, rawParam);
-      }
-
-      // If not exact match, search folder for match
-      let exists = fs.existsSync(targetPath) && fs.statSync(targetPath).isFile();
-      if (!exists) {
-        const files = fs.readdirSync(uploadsDir);
-        const match = files.find(f => 
-          f === decodedFilename || 
-          f === rawParam || 
-          f.includes(cleanName) || 
-          f.includes(decodedFilename) || 
-          encodeURIComponent(f) === rawParam
-        );
-        if (match) {
-          targetPath = path.join(uploadsDir, match);
-          exists = true;
-        }
-      }
-
-      // If still not on disk, try auto-restoring from Redis
-      if (!exists) {
-        const keysToTry = [decodedFilename, rawParam, cleanName];
-        for (const k of keysToTry) {
-          const restored = await restoreFileFromRedis(k, path.join(uploadsDir, cleanName));
-          if (restored) {
-            targetPath = path.join(uploadsDir, cleanName);
-            exists = true;
-            break;
-          }
-        }
-      }
-
-      if (exists) {
-        const ext = path.extname(targetPath).toLowerCase();
-        if (ext === '.pdf') {
-          res.setHeader('Content-Type', 'application/pdf');
-        } else if (ext === '.xlsx') {
-          res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        } else if (ext === '.xls') {
-          res.setHeader('Content-Type', 'application/vnd.ms-excel');
-        } else if (['.jpg', '.jpeg'].includes(ext)) {
-          res.setHeader('Content-Type', 'image/jpeg');
-        } else if (ext === '.png') {
-          res.setHeader('Content-Type', 'image/png');
-        } else if (ext === '.webp') {
-          res.setHeader('Content-Type', 'image/webp');
-        } else {
-          res.setHeader('Content-Type', 'application/octet-stream');
-        }
-        res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(path.basename(targetPath))}`);
-        res.setHeader('Cache-Control', 'public, max-age=86400');
-        return res.sendFile(targetPath);
-      }
-
-      return res.status(404).json({ error: 'File not found on server storage' });
-    } catch (err: any) {
-      return res.status(500).json({ error: err?.message || 'File download error' });
-    }
-  });
-
-  app.use('/uploads', express.static(uploadsDir));
+  // Support large base64 file payloads up to 100MB
+  app.use(express.json({ limit: "100mb" }));
+  app.use(express.urlencoded({ extended: true, limit: "100mb" }));
 
   // Health check
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", env: process.env.NODE_ENV });
+    res.json({
+      status: "ok",
+      env: process.env.NODE_ENV,
+      redisConfigured: Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN),
+      r2Configured: Boolean(process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID),
+    });
   });
 
-  // Direct Binary & Multipart File Upload Endpoint
-  const handleFileUploadRoute = async (req: express.Request, res: express.Response) => {
-    try {
-      const fileId = (req.query.fileId as string) || (req.headers['x-file-id'] as string) || `${Date.now()}`;
-
-      // 1. Multipart/form-data upload via Multer
-      if (req.file) {
-        const cleanName = cleanAndSafeFilename(req.file.originalname);
-        const fileUrl = `/uploads/${encodeURIComponent(req.file.filename)}`;
-        const filePath = path.join(uploadsDir, req.file.filename);
-
-        // Await sync to Redis before returning so cloud persistence is guaranteed
-        await syncFileToRedis(fileId, filePath, cleanName, req.file.mimetype);
-        await syncFileToRedis(req.file.filename, filePath, cleanName, req.file.mimetype);
-
-        return res.json({
-          success: true,
-          url: fileUrl,
-          filename: req.file.filename,
-          originalName: cleanName,
-          size: req.file.size,
-          fileId
-        });
-      }
-
-      // 2. Base64 JSON payload fallback
-      const { filename, base64 } = req.body || {};
-      if (filename && base64) {
-        const cleanBase64 = base64.replace(/^data:.*?;base64,/, '');
-        const buffer = Buffer.from(cleanBase64, 'base64');
-        const timestamp = Date.now();
-        const cleanName = cleanAndSafeFilename(filename);
-        const savedFileName = `${timestamp}_${cleanName}`;
-        const filePath = path.join(uploadsDir, savedFileName);
-
-        await fs.promises.writeFile(filePath, buffer);
-
-        // Await sync to Redis
-        await syncFileToRedis(fileId, filePath, cleanName, 'application/octet-stream');
-        await syncFileToRedis(savedFileName, filePath, cleanName, 'application/octet-stream');
-
-        const fileUrl = `/uploads/${encodeURIComponent(savedFileName)}`;
-        return res.json({
-          success: true,
-          url: fileUrl,
-          filename: savedFileName,
-          originalName: filename,
-          size: buffer.length,
-          fileId
-        });
-      }
-
-      return res.status(400).json({ success: false, error: "전송된 파일 내용이 없습니다." });
-    } catch (error: any) {
-      console.error("File upload error:", error);
-      return res.status(500).json({ success: false, error: error.message || "Upload failed" });
-    }
-  };
-
-  // Register both GET/POST/ALL on multiple endpoints to prevent 405 on any client call
-  app.get("/api/upload-file", (req, res) => res.json({ status: "ready" }));
-  app.post("/api/upload-file", handleUploadMiddleware, handleFileUploadRoute);
-  app.put("/api/upload-file", handleUploadMiddleware, handleFileUploadRoute);
-
-  app.get("/api/upload", (req, res) => res.json({ status: "ready" }));
-  app.post("/api/upload", handleUploadMiddleware, handleFileUploadRoute);
-  app.put("/api/upload", handleUploadMiddleware, handleFileUploadRoute);
-
-  // API routes for data fetching & saving
-  app.get(["/api/data", "/api/backup"], async (req, res) => {
+  // --- INFO DATA API (ajin-info-files26) ---
+  app.get("/api/info-data", async (req, res) => {
     if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) {
-      return res.status(500).json({ 
-        error: "Redis configuration missing. Please set KV_REST_API_URL and KV_REST_API_TOKEN in settings." 
+      return res.json({
+        projects: [],
+        files: [],
+        warning: "Redis configuration missing. Using local state.",
       });
     }
     try {
-      // Parallel fetch from both ajin_flow26_Backup and ajin_info26
-      const [flowDataRaw, infoDataRaw]: [any, any] = await Promise.all([
-        redis.get(REDIS_FLOW_KEY).catch((err) => {
-          console.warn(`Redis get ${REDIS_FLOW_KEY} error:`, err);
-          return null;
-        }),
-        redis.get(REDIS_INFO_KEY).catch((err) => {
-          console.warn(`Redis get ${REDIS_INFO_KEY} error:`, err);
-          return null;
-        })
-      ]);
+      const data: any = await redis.get(INFO_REDIS_KEY);
+      const defaults = {
+        projects: [],
+        files: [],
+      };
 
+      if (!data) {
+        return res.json(defaults);
+      }
+
+      res.json({
+        ...defaults,
+        ...data,
+      });
+    } catch (error: any) {
+      console.error("Redis fetch error for info-data:", error);
+      res.status(500).json({ error: "Failed to fetch info data from Redis" });
+    }
+  });
+
+  app.post("/api/info-data", async (req, res) => {
+    if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) {
+      return res.json({ success: true, warning: "Redis not configured. Saved locally in memory." });
+    }
+    try {
+      const data = req.body;
+      await redis.set(INFO_REDIS_KEY, data);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Redis save error for info-data:", error);
+      res.status(500).json({ error: "Failed to save info data to Redis" });
+    }
+  });
+
+  // --- FLOW DATA API (ajin_flow26_Backup) ---
+  app.get("/api/data", async (req, res) => {
+    if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) {
+      return res.json({
+        users: [],
+        projects: [],
+        processes: [],
+        tasks: [],
+        processParts: [],
+      });
+    }
+    try {
+      const data: any = await redis.get(FLOW_REDIS_KEY);
       const defaults = {
         users: [],
         projects: [],
         processes: [],
         tasks: [],
         processParts: [],
-        infoProjects: []
       };
 
-      // Parse Flow data
-      let flowData: any = {};
-      if (flowDataRaw) {
-        if (typeof flowDataRaw === 'string') {
-          try { flowData = JSON.parse(flowDataRaw); } catch { flowData = {}; }
-        } else if (typeof flowDataRaw === 'object') {
-          flowData = flowDataRaw;
-        }
+      if (!data) {
+        return res.json(defaults);
       }
-
-      // Parse Info data
-      let infoProjectsList: any[] = [];
-      if (infoDataRaw) {
-        if (typeof infoDataRaw === 'string') {
-          try {
-            const parsed = JSON.parse(infoDataRaw);
-            infoProjectsList = Array.isArray(parsed) ? parsed : (parsed.infoProjects || []);
-          } catch {
-            infoProjectsList = [];
-          }
-        } else if (Array.isArray(infoDataRaw)) {
-          infoProjectsList = infoDataRaw;
-        } else if (typeof infoDataRaw === 'object') {
-          infoProjectsList = infoDataRaw.infoProjects || [];
-        }
-      }
-
-      // If infoProjectsList is empty, fall back to flowData.infoProjects
-      if ((!infoProjectsList || infoProjectsList.length === 0) && flowData.infoProjects && Array.isArray(flowData.infoProjects)) {
-        infoProjectsList = flowData.infoProjects;
-      }
-
-      const users = flowData.users || defaults.users;
-      const projects = flowData.projects || defaults.projects;
-      const processes = flowData.processes || defaults.processes;
-      const tasks = flowData.tasks || defaults.tasks;
-      const processParts = flowData.processParts || defaults.processParts;
-      const infoProjects = (infoProjectsList && infoProjectsList.length > 0) ? infoProjectsList : (flowData.infoProjects || defaults.infoProjects);
 
       res.json({
-        users,
-        projects,
-        processes,
-        tasks,
-        processParts,
-        infoProjects
+        ...defaults,
+        ...data,
       });
     } catch (error: any) {
-      console.error("Redis fetch error:", error);
-      res.status(500).json({ error: error.message || "Failed to fetch data from Redis" });
+      console.error("Redis fetch error for flow-data:", error);
+      res.status(500).json({ error: "Failed to fetch flow data from Redis" });
     }
   });
 
-  app.post(["/api/data", "/api/backup"], async (req, res) => {
+  app.post("/api/data", async (req, res) => {
     if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) {
-      return res.status(500).json({ 
-        error: "Redis configuration missing. Please set KV_REST_API_URL and KV_REST_API_TOKEN in settings." 
-      });
+      return res.json({ success: true, warning: "Redis not configured." });
     }
     try {
       const data = req.body;
-      
-      // Separate Flow payload and Info payload
-      const flowPayload = {
-        users: data.users || [],
-        projects: data.projects || [],
-        processes: data.processes || [],
-        tasks: data.tasks || [],
-        processParts: data.processParts || []
-      };
-
-      // Sanitize infoProjects: Keep Redis payload strictly lightweight
-      let infoProjectsList = Array.isArray(data.infoProjects) ? data.infoProjects : [];
-      infoProjectsList = infoProjectsList.map((project: any) => {
-        if (!project.files || !Array.isArray(project.files)) return project;
-        
-        const cleanFiles = project.files.map((file: any) => {
-          let sanitizedFile = { ...file };
-          if (sanitizedFile.dataUrl && typeof sanitizedFile.dataUrl === 'string' && sanitizedFile.dataUrl.startsWith('data:')) {
-            // Strip any accidental huge base64 strings so Redis never exceeds 1MB limit
-            sanitizedFile.dataUrl = `/uploads/${encodeURIComponent(cleanAndSafeFilename(sanitizedFile.name || 'file'))}`;
-          }
-          if (sanitizedFile.sheetImages && Array.isArray(sanitizedFile.sheetImages)) {
-            sanitizedFile.sheetImages = sanitizedFile.sheetImages.map((si: any) => ({
-              name: si.name,
-              dataUrl: (typeof si.dataUrl === 'string' && si.dataUrl.startsWith('data:')) ? '' : (si.dataUrl || '')
-            }));
-          }
-          return sanitizedFile;
-        });
-
-        return {
-          ...project,
-          files: cleanFiles
-        };
-      });
-
-      // Save both to their dedicated keys in Upstash Redis
-      await Promise.all([
-        redis.set(REDIS_FLOW_KEY, flowPayload),
-        redis.set(REDIS_INFO_KEY, infoProjectsList)
-      ]);
-
+      await redis.set(FLOW_REDIS_KEY, data);
       res.json({ success: true });
-    } catch (error: any) {
-      console.error("Redis save error:", error);
-      res.status(500).json({ error: error.message || "Failed to save data to Redis" });
+    } catch (error) {
+      console.error("Redis save error for flow-data:", error);
+      res.status(500).json({ error: "Failed to save flow data to Redis" });
     }
   });
 
@@ -762,10 +140,7 @@ async function startServer() {
       return res.status(500).json({ error: "Redis configuration missing." });
     }
     try {
-      await Promise.all([
-        redis.del(REDIS_FLOW_KEY),
-        redis.del(REDIS_INFO_KEY)
-      ]);
+      await redis.del(FLOW_REDIS_KEY);
       res.json({ success: true });
     } catch (error) {
       console.error("Redis reset error:", error);
@@ -773,9 +148,114 @@ async function startServer() {
     }
   });
 
-  // Catch-all for API routes so unhandled API endpoints NEVER fall through to Vite (prevents Vite 405 error)
-  app.all('/api/*', (req, res) => {
-    res.status(404).json({ error: `API endpoint not found: ${req.method} ${req.path}` });
+  // --- FILE UPLOAD API ---
+  app.post("/api/upload", async (req, res) => {
+    try {
+      const { fileName, folder, base64Data, contentType } = req.body;
+
+      if (!fileName || !folder || !base64Data) {
+        return res.status(400).json({ error: "Missing required fields: fileName, folder, base64Data" });
+      }
+
+      const validFolders = ["info-pdf", "info-excel", "info-image"];
+      const targetFolder = validFolders.includes(folder) ? (folder as 'info-pdf' | 'info-excel' | 'info-image') : "info-pdf";
+
+      // Decode base64 buffer
+      const pureBase64 = base64Data.includes(",") ? base64Data.split(",")[1] : base64Data;
+      const buffer = Buffer.from(pureBase64, "base64");
+      const resolvedContentType = contentType || (
+        targetFolder === "info-pdf" ? "application/pdf" :
+        targetFolder === "info-excel" ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" :
+        "image/jpeg"
+      );
+
+      // Save locally to disk
+      const localFilePath = path.join(UPLOADS_BASE, targetFolder, fileName);
+      fs.writeFileSync(localFilePath, buffer);
+
+      // Upload to Cloudflare R2 bucket "ajin-info-files"
+      const r2Result = await uploadToR2(targetFolder, fileName, buffer, resolvedContentType);
+
+      res.json({
+        success: true,
+        fileName,
+        folder: targetFolder,
+        storagePath: r2Result.storagePath,
+        fileUrl: r2Result.url,
+        fileSize: buffer.length,
+      });
+    } catch (error: any) {
+      console.error("Upload error:", error);
+      res.status(500).json({ error: "Failed to upload file: " + (error?.message || "Unknown error") });
+    }
+  });
+
+  // --- FILE DELETE API ---
+  app.delete("/api/files/:folder/:fileName", async (req, res) => {
+    try {
+      const { folder, fileName } = req.params;
+      const decodedFileName = decodeURIComponent(fileName);
+
+      // Delete from local disk
+      const localFilePath = path.join(UPLOADS_BASE, folder, decodedFileName);
+      if (fs.existsSync(localFilePath)) {
+        try {
+          fs.unlinkSync(localFilePath);
+        } catch (e) {
+          console.warn("Could not delete local file:", e);
+        }
+      }
+
+      // Delete from Cloudflare R2
+      await deleteFromR2(folder, decodedFileName);
+
+      res.json({ success: true, message: `File ${folder}/${decodedFileName} deleted successfully` });
+    } catch (error: any) {
+      console.error("File delete error:", error);
+      res.status(500).json({ error: "Failed to delete file" });
+    }
+  });
+
+  // --- FILE SERVE / GET API ---
+  app.get("/api/files/:folder/:fileName", async (req, res) => {
+    try {
+      const { folder, fileName } = req.params;
+      const decodedFileName = decodeURIComponent(fileName);
+      const localFilePath = path.join(UPLOADS_BASE, folder, decodedFileName);
+
+      // Determine content-type
+      const ext = path.extname(decodedFileName).toLowerCase();
+      let contentType = "application/octet-stream";
+      if (ext === ".pdf") contentType = "application/pdf";
+      else if (ext === ".xlsx") contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+      else if (ext === ".xls") contentType = "application/vnd.ms-excel";
+      else if (ext === ".csv") contentType = "text/csv; charset=utf-8";
+      else if (ext === ".jpg" || ext === ".jpeg") contentType = "image/jpeg";
+      else if (ext === ".png") contentType = "image/png";
+      else if (ext === ".webp") contentType = "image/webp";
+      else if (ext === ".gif") contentType = "image/gif";
+
+      // If exists locally, serve it
+      if (fs.existsSync(localFilePath)) {
+        res.setHeader("Content-Type", contentType);
+        res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(decodedFileName)}"`);
+        return fs.createReadStream(localFilePath).pipe(res);
+      }
+
+      // Otherwise try fetching from R2
+      const r2Object = await getFromR2(folder, decodedFileName);
+      if (r2Object && r2Object.Body) {
+        res.setHeader("Content-Type", r2Object.ContentType || contentType);
+        res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(decodedFileName)}"`);
+        const stream = r2Object.Body as any;
+        return stream.pipe(res);
+      }
+
+      return res.status(404).json({ error: "File not found" });
+    } catch (error: any) {
+      console.error("File serve error:", error);
+      res.status(500).json({ error: "Failed to fetch file" });
+    }
   });
 
   // Vite middleware for development

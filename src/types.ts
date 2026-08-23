@@ -4,9 +4,11 @@ export interface UserConfig {
   id: string;
   initials: string;
   password: string;
+  name?: string;
   isAuthorized?: boolean;
-  canAccessFlow?: boolean; // Flow 메뉴 접근 권한
-  canAccessInfo?: boolean; // Info 메뉴 접근 권한
+  canAccessFlow?: boolean;
+  canAccessInfo?: boolean;
+  canManageInfo?: boolean; // Can upload, edit, delete info and complete projects
 }
 
 export interface User {
@@ -15,35 +17,54 @@ export interface User {
   name: string;
 }
 
-export interface InfoFile {
-  id: string;
-  name: string;
-  type: 'pdf' | 'excel' | 'image' | 'other';
-  size: number;
-  dataUrl: string; // URL or Base64 data URL
-  uploadedAt: string;
-  parsedSheets?: {
-    name: string;
-    data: any[][];
-  }[];
-  sheetImages?: {
-    name: string;
-    dataUrl: string;
-  }[];
-}
+export type InfoFolderType = 'info-pdf' | 'info-excel' | 'info-image';
+export type InfoFileType = 'pdf' | 'excel' | 'image' | 'other';
+export type InfoProjectStatus = 'active' | 'completed' | 'trash';
 
 export interface InfoProject {
   id: string;
-  model: string;          // 모델명 (예: EF62)
-  deviceType: string;     // 기종 (예: CPH-332R)
-  quantity: string | number; // 생산수량 (예: 5000 또는 5,000개)
+  model: string;          // 모델명 (e.g. AJ-2026, Alpha-Pro)
+  machineType: string;    // 기종 / 설비 (e.g. CNC-5200, 사출 1호기)
   shipmentDate: string;   // 선적날짜 (YYYY-MM-DD)
-  status: 'active' | 'completed';
-  completedAt?: string;
+  productionQty: string | number; // 생산수량 (e.g. 5000 or "5,000 EA")
+  notes?: string;         // 비고/메모
+  status: InfoProjectStatus;
   createdAt: string;
-  sortOrder: number;
+  updatedAt: string;
+  completedAt?: string;
+  completedBy?: string;
+  deletedAt?: string;
+  order?: number;
+}
+
+export interface InfoFile {
+  id: string;
+  projectId: string;      // 소속 프로젝트 ID
+  fileName: string;       // 원본 파일명 (e.g. "상판_도면_A1.pdf")
+  fileType: InfoFileType; // 'pdf' | 'excel' | 'image' | 'other'
+  folder: InfoFolderType; // 'info-pdf' | 'info-excel' | 'info-image'
+  storagePath: string;    // R2 키 (e.g. "info-pdf/172400000_dwg.pdf")
+  fileUrl: string;        // 다운로드/열람 URL 또는 data URL
+  fileSize: number;       // byte size
+  mimeType: string;
+  uploadedBy: string;     // 업로더 (e.g. "5200", "MASTER")
+  uploadedAt: string;
+  updatedAt: string;
+  status: 'active' | 'trash';
+  deletedAt?: string;
+  version?: number;
+  description?: string;
+  originalSize?: number;  // 압축 전 원본 크기 (이미지 최적화 표시용)
+  compressedSize?: number;// 압축 후 크기
+  previewData?: {
+    excelSheets?: string[];
+    thumbnailUrl?: string;
+  };
+}
+
+export interface InfoDataState {
+  projects: InfoProject[];
   files: InfoFile[];
-  memo?: string;
 }
 
 export interface Project {
@@ -100,15 +121,6 @@ export interface ProcessPart {
   order: number;
   rawData?: any[]; // Raw row data from Excel
 }
-
-export interface InjectionPart extends ProcessPart {}
-export interface PrintingPart extends ProcessPart {}
-export interface MetalPart extends ProcessPart {}
-export interface PaintPart extends ProcessPart {}
-export interface PrintPart extends ProcessPart {}
-export interface MachiningPart extends ProcessPart {}
-export interface AssemblyPart extends ProcessPart {}
-export interface PackagingPart extends ProcessPart {}
 
 export const PROCESS_LIST = [
   '사출',
