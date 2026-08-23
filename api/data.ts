@@ -3,15 +3,41 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 const REDIS_KEY = "ajin_flow26_Backup";
 
-const redis = new Redis({
-  url: process.env.KV_REST_API_URL || '',
-  token: process.env.KV_REST_API_TOKEN || '',
-});
+function getRedisClient(): Redis | null {
+  const url = (
+    process.env.KV_REST_API_URL ||
+    process.env.UPSTASH_REDIS_REST_URL ||
+    process.env.REDIS_URL ||
+    process.env.REDIS_REST_URL ||
+    ''
+  ).trim();
+
+  const token = (
+    process.env.KV_REST_API_TOKEN ||
+    process.env.UPSTASH_REDIS_REST_TOKEN ||
+    process.env.REDIS_TOKEN ||
+    process.env.REDIS_REST_TOKEN ||
+    ''
+  ).trim();
+
+  if (!url || !token) {
+    return null;
+  }
+
+  try {
+    return new Redis({ url, token });
+  } catch (e) {
+    console.error('Failed to create Redis client:', e);
+    return null;
+  }
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) {
+  const redis = getRedisClient();
+
+  if (!redis) {
     return res.status(500).json({ 
-      error: "Redis configuration missing. Please set KV_REST_API_URL and KV_REST_API_TOKEN in settings." 
+      error: "Redis configuration missing. Please check KV_REST_API_URL and KV_REST_API_TOKEN in Vercel Settings." 
     });
   }
 
@@ -42,7 +68,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           error: `Redis key "${REDIS_KEY}" holds the wrong data type (${actualType}). Please delete or rename this key in your Upstash console and try again.` 
         });
       }
-      return res.status(500).json({ error: "Failed to fetch data from Redis" });
+      return res.status(500).json({ error: "Failed to fetch data from Redis: " + (error?.message || '') });
     }
   }
 
@@ -51,9 +77,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const data = req.body;
       await redis.set(REDIS_KEY, data);
       return res.json({ success: true });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Redis save error:", error);
-      return res.status(500).json({ error: "Failed to save data to Redis" });
+      return res.status(500).json({ error: "Failed to save data to Redis: " + (error?.message || '') });
     }
   }
 

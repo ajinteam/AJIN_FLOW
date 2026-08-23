@@ -1,6 +1,13 @@
 {
   "version": 2,
   "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
+    {
+      "source": "/api/files/([^/]+)/(.+)",
+      "destination": "/api/files?folder=$1&file=$2"
+    },
+    {
+      "source": "/((?!api/.*).*)",
+      "destination": "/index.html"
+    }
   ]
 }
