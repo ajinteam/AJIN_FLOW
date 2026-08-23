@@ -148,6 +148,59 @@ async function startServer() {
     }
   });
 
+  // --- DIRECT PRESIGNED URL API (Bypasses server payload limits for 10MB, 20MB, 50MB+ files) ---
+  app.post("/api/presign", async (req, res) => {
+    try {
+      const { fileName, folder, contentType } = req.body;
+      if (!fileName || !folder) {
+        return res.status(400).json({ error: "Missing required fields: fileName, folder" });
+      }
+
+      const validFolders = ["info-pdf", "info-excel", "info-image"];
+      const targetFolder = validFolders.includes(folder) ? folder : "info-pdf";
+      const cleanFileName = `${Date.now()}_${fileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+      const key = `${targetFolder}/${cleanFileName}`;
+
+      const { getR2PresignedPutUrl } = await import("./src/lib/r2Presign.js").catch(async () => {
+        return await import("./src/lib/r2Presign");
+      });
+
+      const presignResult = await getR2PresignedPutUrl(targetFolder as any, cleanFileName, contentType);
+      if (presignResult) {
+        return res.json({
+          isDirectR2: true,
+          presignedUrl: presignResult.presignedUrl,
+          storagePath: key,
+          fileUrl: presignResult.fileUrl,
+          fileName: cleanFileName,
+          folder: targetFolder,
+        });
+      }
+
+      return res.json({
+        isDirectR2: false,
+        message: "R2 presigned URL not available; fallback to local upload",
+      });
+    } catch (e: any) {
+      console.error("Presign error:", e);
+      return res.status(500).json({ error: e?.message || "Failed to generate presigned URL" });
+    }
+  });
+
+  // --- SYNC / SCAN R2 STORAGE API ---
+  app.get("/api/sync-r2", async (req, res) => {
+    try {
+      const { listAllR2Objects } = await import("./src/lib/r2Presign.js").catch(async () => {
+        return await import("./src/lib/r2Presign");
+      });
+      const result = await listAllR2Objects();
+      return res.json(result);
+    } catch (e: any) {
+      console.error("Sync R2 error:", e);
+      return res.status(500).json({ error: e?.message || "Failed to list R2 objects" });
+    }
+  });
+
   // --- FILE UPLOAD API ---
   app.post("/api/upload", async (req, res) => {
     try {

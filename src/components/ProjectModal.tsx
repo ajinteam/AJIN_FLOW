@@ -39,6 +39,20 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
     setError('');
   }, [projectToEdit, isOpen]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+
+    window.history.pushState({ modal: 'project' }, '');
+    const handlePopState = () => {
+      onClose();
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const handleSubmit = (e: React.FormEvent) => {

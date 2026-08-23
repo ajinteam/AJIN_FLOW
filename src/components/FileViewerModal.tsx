@@ -12,7 +12,8 @@ interface FileViewerModalProps {
 export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose }) => {
   const [zoom, setZoom] = useState<number>(100);
   const [rotation, setRotation] = useState<number>(0);
-  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  // Default to true so PC/Desktop opens in full-screen view (Requirement #3)
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(true);
 
   // Excel viewer state
   const [excelSheets, setExcelSheets] = useState<{ name: string; data: any[][] }[]>([]);
@@ -20,6 +21,23 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose 
   const [excelSearch, setExcelSearch] = useState<string>('');
   const [excelLoading, setExcelLoading] = useState<boolean>(false);
   const [excelError, setExcelError] = useState<string>('');
+
+  // Mobile Back Button support (Requirement #4)
+  useEffect(() => {
+    if (!file) return;
+
+    // Push history state when viewer opens
+    window.history.pushState({ modal: 'file-viewer', fileId: file.id }, '');
+
+    const handlePopState = (e: PopStateEvent) => {
+      onClose();
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [file, onClose]);
 
   useEffect(() => {
     setZoom(100);

@@ -136,6 +136,31 @@ export function detectFileTypeAndFolder(file: File): {
   return { fileType: 'other', folder: 'info-pdf' };
 }
 
+export async function syncFilesFromR2(): Promise<{
+  success: boolean;
+  configured: boolean;
+  bucket?: string;
+  count: number;
+  objects: Array<{
+    key: string;
+    folder: string;
+    fileName: string;
+    size: number;
+    lastModified?: string;
+    url: string;
+    fileType: 'pdf' | 'excel' | 'image' | 'other';
+  }>;
+}> {
+  try {
+    const res = await fetch('/api/sync-r2');
+    if (!res.ok) throw new Error('Failed to fetch R2 files');
+    return await res.json();
+  } catch (err: any) {
+    console.error('R2 sync fetch error:', err);
+    return { success: false, configured: false, count: 0, objects: [] };
+  }
+}
+
 export async function uploadSingleFile(
   file: File,
   projectId: string,
@@ -175,39 +200,89 @@ export async function uploadSingleFile(
     }
   }
 
-  // 3. Convert to base64 if not already
-  if (!dataUrl) {
-    dataUrl = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(processedFile);
-    });
-  }
-
-  // 4. Send to server to store in Cloudflare R2 bucket ajin-info-files + local uploads
+  // 3. STEP A: Direct Presigned Upload to Cloudflare R2 (Bypasses Vercel 4.5MB limit for 10MB, 20MB, 50MB+ files)
   let serverStoragePath = `${folder}/${Date.now()}_${file.name}`;
-  let fileUrl = dataUrl; // fallback
+  let fileUrl = '';
+  let directR2Success = false;
 
   try {
-    const res = await fetch('/api/upload', {
+    const presignRes = await fetch('/api/presign', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        fileName: `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`,
+        fileName: file.name,
         folder,
-        base64Data: dataUrl,
-        contentType: processedFile.type,
+        contentType: processedFile.type || 'application/octet-stream',
+        fileSize: processedFile.size,
       }),
     });
 
-    if (res.ok) {
-      const json = await res.json();
-      serverStoragePath = json.storagePath || serverStoragePath;
-      fileUrl = json.fileUrl || fileUrl;
+    if (presignRes.ok) {
+      const presignData = await presignRes.json();
+      if (presignData.isDirectR2 && presignData.presignedUrl) {
+        // Upload directly from browser to Cloudflare R2!
+        const uploadRes = await fetch(presignData.presignedUrl, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': processedFile.type || 'application/octet-stream',
+          },
+          body: processedFile,
+        });
+
+        if (uploadRes.ok) {
+          directR2Success = true;
+          serverStoragePath = presignData.storagePath;
+          fileUrl = presignData.fileUrl;
+          console.log(`[R2 Direct Upload] Successfully uploaded ${file.name} directly to Cloudflare R2 (${formatFileSize(processedFile.size)})`);
+        }
+      }
     }
-  } catch (err) {
-    console.warn('Server upload error, using local data URL:', err);
+  } catch (presignErr) {
+    console.warn('[R2 Direct Upload] Presign attempt failed, attempting fallback:', presignErr);
+  }
+
+  // STEP B: Fallback if Direct R2 upload was not available or failed
+  if (!directR2Success) {
+    if (!dataUrl && processedFile.size < 15 * 1024 * 1024) {
+      // Only generate base64 if reasonable size
+      try {
+        dataUrl = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(processedFile);
+        });
+      } catch (e) {
+        console.warn('FileReader failed:', e);
+      }
+    }
+
+    if (dataUrl) {
+      try {
+        const res = await fetch('/api/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fileName: `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`,
+            folder,
+            base64Data: dataUrl,
+            contentType: processedFile.type,
+          }),
+        });
+
+        if (res.ok) {
+          const json = await res.json();
+          serverStoragePath = json.storagePath || serverStoragePath;
+          fileUrl = json.fileUrl || fileUrl;
+        }
+      } catch (err) {
+        console.warn('Server upload error, using local data URL fallback:', err);
+      }
+    }
+
+    if (!fileUrl) {
+      fileUrl = dataUrl || URL.createObjectURL(processedFile);
+    }
   }
 
   const newFileRecord: InfoFile = {
@@ -229,7 +304,7 @@ export async function uploadSingleFile(
     compressedSize,
     previewData: {
       excelSheets,
-      thumbnailUrl: fileType === 'image' ? dataUrl : undefined,
+      thumbnailUrl: fileType === 'image' && dataUrl ? dataUrl : undefined,
     },
   };
 

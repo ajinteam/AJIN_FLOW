@@ -285,6 +285,64 @@ export default function App() {
     init();
   }, [loadInfoData, loadFlowData]);
 
+  // Mobile Back Button Management (Requirement #4)
+  useEffect(() => {
+    const handlePopState = (e: PopStateEvent) => {
+      // Priority 1: Close innermost Flow / App modals if open
+      if (passwordModal.isOpen) {
+        setPasswordModal((prev) => ({ ...prev, isOpen: false }));
+        return;
+      }
+      if (confirmModal.isOpen) {
+        setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+        return;
+      }
+      if (alertModal.isOpen) {
+        setAlertModal((prev) => ({ ...prev, isOpen: false }));
+        return;
+      }
+      if (isUserManagementOpen) {
+        setIsUserManagementOpen(false);
+        return;
+      }
+      if (selectedProcess) {
+        setSelectedProcess(null);
+        return;
+      }
+      if (selectedFlowProject) {
+        setSelectedFlowProject(null);
+        return;
+      }
+      if (isFlowProjectModalOpen) {
+        setIsFlowProjectModalOpen(false);
+        return;
+      }
+      if (showFlowCompleted) {
+        setShowFlowCompleted(false);
+        return;
+      }
+      // Priority 2: If on Flow view, return to Home (Info view)
+      if (currentView === 'flow') {
+        setCurrentView('info');
+        return;
+      }
+      // If at home (Info view) with no modals, allow standard back action (exit app)
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [
+    passwordModal.isOpen,
+    confirmModal.isOpen,
+    alertModal.isOpen,
+    isUserManagementOpen,
+    selectedProcess,
+    selectedFlowProject,
+    isFlowProjectModalOpen,
+    showFlowCompleted,
+    currentView,
+  ]);
+
   // Persist Flow Data
   const persistFlowData = async (updates: any) => {
     const updated = {
@@ -896,8 +954,12 @@ export default function App() {
             {/* Flow Tab */}
             <button
               onClick={() => {
-                if (canAccessFlow) setCurrentView('flow');
-                else alert('FLOW 공정 접근 권한이 없습니다. 관리자에게 문의하세요.');
+                if (canAccessFlow) {
+                  window.history.pushState({ view: 'flow' }, '');
+                  setCurrentView('flow');
+                } else {
+                  alert('FLOW 공정 접근 권한이 없습니다. 관리자에게 문의하세요.');
+                }
               }}
               className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all whitespace-nowrap border ${
                 currentView === 'flow'
@@ -1142,9 +1204,10 @@ export default function App() {
                         return (
                           <div
                             key={procName}
-                            onClick={() =>
-                              setSelectedProcess({ projectId: project.id, name: procName })
-                            }
+                            onClick={() => {
+                              window.history.pushState({ modal: 'process', procName }, '');
+                              setSelectedProcess({ projectId: project.id, name: procName });
+                            }}
                             className="p-4 flex flex-col items-center justify-between text-center hover:bg-slate-50/80 transition-colors cursor-pointer min-h-[140px]"
                           >
                             <div className="text-xs font-bold text-slate-600 mb-1">

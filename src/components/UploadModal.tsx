@@ -45,6 +45,20 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     }
   }, [defaultProjectId, projects]);
 
+  React.useEffect(() => {
+    if (!isOpen) return;
+
+    window.history.pushState({ modal: 'upload' }, '');
+    const handlePopState = () => {
+      onClose();
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const handleFileSelection = async (selectedFileList: FileList | null) => {

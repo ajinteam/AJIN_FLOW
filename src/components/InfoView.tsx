@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { InfoProject, InfoFile, UserConfig, InfoFolderType } from '../types';
 import {
   Upload,
@@ -24,14 +24,16 @@ import {
   Cpu,
   Hash,
   Eye,
-  Check
+  Check,
+  Cloud,
+  RefreshCw
 } from 'lucide-react';
 import { format, differenceInDays, parseISO, isAfter } from 'date-fns';
 import { formatFileSize } from '../lib/imageCompressor';
 import { FileViewerModal } from './FileViewerModal';
 import { ProjectModal } from './ProjectModal';
 import { UploadModal } from './UploadModal';
-import { uploadSingleFile, deleteFileFromServer } from '../lib/api';
+import { uploadSingleFile, deleteFileFromServer, syncFilesFromR2 } from '../lib/api';
 
 interface InfoViewProps {
   projects: InfoProject[];
@@ -55,6 +57,8 @@ export const InfoView: React.FC<InfoViewProps> = ({
   const [activeTab, setActiveTab] = useState<'active' | 'completed' | 'trash'>('active');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedFileFilter, setSelectedFileFilter] = useState<'all' | 'pdf' | 'excel' | 'image'>('all');
+  const [isSyncingR2, setIsSyncingR2] = useState<boolean>(false);
+  const [syncNotice, setSyncNotice] = useState<string>('');
   
   // Modals state
   const [viewingFile, setViewingFile] = useState<InfoFile | null>(null);
@@ -66,11 +70,99 @@ export const InfoView: React.FC<InfoViewProps> = ({
   // Expanded project accordion state (which projects show file lists)
   const [expandedProjectIds, setExpandedProjectIds] = useState<Record<string, boolean>>({});
 
+  // Mobile Back Button support for tab switching (Requirement #4)
+  useEffect(() => {
+    const handlePopState = (e: PopStateEvent) => {
+      if (activeTab !== 'active' && !viewingFile && !isProjectModalOpen && !isUploadModalOpen) {
+        setActiveTab('active');
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [activeTab, viewingFile, isProjectModalOpen, isUploadModalOpen]);
+
   const toggleProjectExpand = (projectId: string) => {
     setExpandedProjectIds((prev) => ({
       ...prev,
       [projectId]: !prev[projectId],
     }));
+  };
+
+  // Sync / Scan existing files stored directly in Cloudflare R2
+  const handleSyncCloudflareR2 = async () => {
+    setIsSyncingR2(true);
+    setSyncNotice('');
+    try {
+      const syncResult = await syncFilesFromR2();
+      if (!syncResult.configured) {
+        setSyncNotice('Cloudflare R2가 아직 연결되지 않았습니다. Vercel 환경 변수를 확인해주세요.');
+        return;
+      }
+
+      if (syncResult.objects.length === 0) {
+        setSyncNotice('Cloudflare R2 버킷에 저장된 파일이 없습니다.');
+        return;
+      }
+
+      // Check which objects in R2 are not yet in `files`
+      const existingKeys = new Set(files.map((f) => f.storagePath));
+      const missingObjects = syncResult.objects.filter((obj) => !existingKeys.has(obj.key));
+
+      if (missingObjects.length === 0) {
+        setSyncNotice(`클라우드(R2)의 모든 파일(${syncResult.count}개)이 앱과 이미 100% 동기화되어 있습니다.`);
+        return;
+      }
+
+      // Ensure we have a target project to associate missing files with
+      let targetProj = projects.find((p) => p.status === 'active');
+      let updatedProjects = [...projects];
+
+      if (!targetProj) {
+        targetProj = {
+          id: `proj_r2_sync_${Date.now()}`,
+          model: 'R2-CLOUD',
+          machineType: '클라우드 동기화 보관함',
+          shipmentDate: new Date().toISOString().substring(0, 10),
+          productionQty: String(missingObjects.length),
+          notes: 'Cloudflare R2에서 자동 동기화된 파일 보관함',
+          status: 'active',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        updatedProjects = [targetProj, ...projects];
+        onUpdateProjects(updatedProjects);
+      }
+
+      // Create new InfoFile items for missing objects
+      const newFiles: InfoFile[] = missingObjects.map((obj) => ({
+        id: `file_r2_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        projectId: targetProj!.id,
+        fileName: obj.fileName,
+        fileType: obj.fileType,
+        folder: obj.folder as InfoFolderType,
+        storagePath: obj.key,
+        fileUrl: obj.url,
+        fileSize: obj.size,
+        mimeType: obj.fileType === 'pdf' ? 'application/pdf' : obj.fileType === 'excel' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'image/jpeg',
+        uploadedBy: 'Cloudflare_R2',
+        uploadedAt: obj.lastModified || new Date().toISOString(),
+        updatedAt: obj.lastModified || new Date().toISOString(),
+        status: 'active',
+        version: 1,
+        originalSize: obj.size,
+        compressedSize: obj.size,
+      }));
+
+      onUpdateFiles([...newFiles, ...files]);
+      setExpandedProjectIds((prev) => ({ ...prev, [targetProj!.id]: true }));
+      setSyncNotice(`클라우드(R2)에서 ${newFiles.length}개의 이미지/파일을 새로 불러와 동기화했습니다!`);
+    } catch (e: any) {
+      setSyncNotice('클라우드 동기화 실패: ' + (e?.message || '알 수 없는 오류'));
+    } finally {
+      setIsSyncingR2(false);
+      setTimeout(() => setSyncNotice(''), 6000);
+    }
   };
 
   // Helper to calculate D-Day
@@ -384,6 +476,17 @@ export const InfoView: React.FC<InfoViewProps> = ({
 
           {/* Top Buttons */}
           <div className="flex items-center gap-2 shrink-0">
+            {/* Cloud Sync Button */}
+            <button
+              onClick={handleSyncCloudflareR2}
+              disabled={isSyncingR2}
+              className="flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-sky-400 hover:text-sky-300 border border-slate-700 text-xs sm:text-sm font-semibold transition-all whitespace-nowrap active:scale-95 disabled:opacity-50"
+              title="Cloudflare R2 스토리지의 파일과 동기화"
+            >
+              <RefreshCw className={`w-4 h-4 ${isSyncingR2 ? 'animate-spin text-sky-400' : 'text-sky-400'}`} />
+              <span>{isSyncingR2 ? '클라우드 동기화 중...' : '클라우드 동기화'}</span>
+            </button>
+
             {canManage && (
               <>
                 <button
@@ -411,6 +514,17 @@ export const InfoView: React.FC<InfoViewProps> = ({
             )}
           </div>
         </div>
+
+        {/* Sync Notification Banner */}
+        {syncNotice && (
+          <div className="mt-3 p-3 rounded-xl bg-sky-500/10 border border-sky-500/30 text-sky-300 text-xs flex items-center justify-between animate-fadeIn">
+            <div className="flex items-center gap-2">
+              <Cloud className="w-4 h-4 text-sky-400 shrink-0" />
+              <span>{syncNotice}</span>
+            </div>
+            <button onClick={() => setSyncNotice('')} className="text-slate-400 hover:text-white font-bold ml-2">✕</button>
+          </div>
+        )}
 
         {/* Tab Navigation & Search Row */}
         <div className="mt-4 pt-4 border-t border-slate-800/80 flex flex-col md:flex-row md:items-center justify-between gap-3">
