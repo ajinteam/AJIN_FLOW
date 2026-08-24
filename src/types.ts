@@ -38,6 +38,13 @@ export interface InfoProject {
   order?: number;
 }
 
+export interface InfoFileUploadHistoryItem {
+  version: number;
+  uploadedAt: string;
+  uploadedBy: string;
+  fileSize: number;
+}
+
 export interface InfoFile {
   id: string;
   projectId: string;      // 소속 프로젝트 ID
@@ -54,6 +61,7 @@ export interface InfoFile {
   status: 'active' | 'trash';
   deletedAt?: string;
   version?: number;
+  uploadHistory?: InfoFileUploadHistoryItem[];
   description?: string;
   originalSize?: number;  // 압축 전 원본 크기 (이미지 최적화 표시용)
   compressedSize?: number;// 압축 후 크기

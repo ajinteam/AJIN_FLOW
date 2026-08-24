@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { InfoFile } from '../types';
 import { X, Download, ZoomIn, ZoomOut, RotateCw, FileSpreadsheet, FileText, Image as ImageIcon, Search, Maximize2, Minimize2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { format, parseISO } from 'date-fns';
 import { formatFileSize } from '../lib/imageCompressor';
 import { PdfViewer } from './PdfViewer';
 
@@ -139,11 +140,31 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose 
               {file.fileType === 'other' && <FileText className="w-5 h-5 text-slate-400" />}
             </div>
             <div className="min-w-0">
-              <h2 className="font-semibold text-sm md:text-base text-slate-100 truncate">
-                {file.fileName}
-              </h2>
-              <div className="flex items-center gap-2 text-xs text-slate-400 whitespace-nowrap">
+              <div className="flex items-center gap-2">
+                <h2 className="font-semibold text-sm md:text-base text-slate-100 truncate">
+                  {file.fileName}
+                </h2>
+                <span
+                  className={`px-1.5 py-0.5 rounded font-bold font-mono text-[10px] shrink-0 ${
+                    file.version && file.version > 1
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                      : 'bg-sky-500/20 text-sky-300 border border-sky-500/30'
+                  }`}
+                >
+                  V{file.version || 1}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400 whitespace-nowrap mt-0.5">
                 <span>{formatFileSize(file.fileSize)}</span>
+                <span>•</span>
+                <span>
+                  업로드:{' '}
+                  {file.updatedAt
+                    ? format(parseISO(file.updatedAt), 'yyyy-MM-dd HH:mm')
+                    : file.uploadedAt
+                    ? format(parseISO(file.uploadedAt), 'yyyy-MM-dd HH:mm')
+                    : '-'}
+                </span>
                 <span>•</span>
                 <span>업로더: {file.uploadedBy}</span>
                 {file.originalSize && file.originalSize > file.fileSize && (

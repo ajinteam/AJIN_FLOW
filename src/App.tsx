@@ -364,7 +364,13 @@ export default function App() {
     }
   };
 
-  // Handle Info Data updates
+  // Handle Info Data updates (with atomic full update to prevent race conditions during deletion)
+  const handleUpdateInfoData = (newProjects: InfoProject[], newFiles: InfoFile[]) => {
+    setInfoProjects(newProjects);
+    setInfoFiles(newFiles);
+    saveInfoData({ projects: newProjects, files: newFiles });
+  };
+
   const handleUpdateInfoProjects = (newProjects: InfoProject[]) => {
     setInfoProjects(newProjects);
     saveInfoData({ projects: newProjects, files: infoFiles });
@@ -1050,6 +1056,7 @@ export default function App() {
             canManage={canManageInfo}
             onUpdateProjects={handleUpdateInfoProjects}
             onUpdateFiles={handleUpdateInfoFiles}
+            onUpdateInfoData={handleUpdateInfoData}
           />
         )}
 

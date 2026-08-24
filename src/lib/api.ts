@@ -1,5 +1,5 @@
 import { InfoDataState, InfoFile, InfoFolderType, InfoProject } from '../types';
-import { compressImage } from './imageCompressor';
+import { compressImage, formatFileSize } from './imageCompressor';
 import * as XLSX from 'xlsx';
 
 const LOCAL_STORAGE_INFO_KEY = 'ajin_info_data_local_v2';
@@ -400,6 +400,7 @@ export async function uploadSingleFile(
     }
   }
 
+  const now = new Date().toISOString();
   const newFileRecord: InfoFile = {
     id: `file_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
     projectId,
@@ -411,10 +412,18 @@ export async function uploadSingleFile(
     fileSize: compressedSize,
     mimeType: processedFile.type || 'application/octet-stream',
     uploadedBy,
-    uploadedAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    uploadedAt: now,
+    updatedAt: now,
     status: 'active',
     version: 1,
+    uploadHistory: [
+      {
+        version: 1,
+        uploadedAt: now,
+        uploadedBy,
+        fileSize: compressedSize,
+      },
+    ],
     originalSize,
     compressedSize,
     previewData: {

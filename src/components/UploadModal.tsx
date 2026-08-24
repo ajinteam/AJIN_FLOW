@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { InfoProject } from '../types';
+import { InfoProject, InfoFile } from '../types';
 import { Upload, X, FileText, FileSpreadsheet, Image as ImageIcon, CheckCircle, AlertCircle, Sparkles, Folder, ArrowRight } from 'lucide-react';
 import { compressImage, formatFileSize } from '../lib/imageCompressor';
 import { detectFileTypeAndFolder } from '../lib/api';
@@ -7,6 +7,7 @@ import { detectFileTypeAndFolder } from '../lib/api';
 interface UploadModalProps {
   isOpen: boolean;
   projects: InfoProject[];
+  files?: InfoFile[];
   defaultProjectId?: string;
   onClose: () => void;
   onUploadComplete: (projectId: string, files: File[]) => Promise<void>;
@@ -26,6 +27,7 @@ interface StagedFile {
 export const UploadModal: React.FC<UploadModalProps> = ({
   isOpen,
   projects,
+  files = [],
   defaultProjectId,
   onClose,
   onUploadComplete,
@@ -270,47 +272,68 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               </div>
 
               <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
-                {stagedFiles.map((sf, idx) => (
-                  <div
-                    key={idx}
-                    className="flex items-center justify-between p-2.5 rounded-xl bg-slate-800/80 border border-slate-700/70 text-xs"
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0 pr-2">
-                      <div className="p-1.5 rounded-lg bg-slate-700/80 shrink-0">
-                        {sf.fileType === 'pdf' && <FileText className="w-4 h-4 text-red-400" />}
-                        {sf.fileType === 'excel' && <FileSpreadsheet className="w-4 h-4 text-emerald-400" />}
-                        {sf.fileType === 'image' && <ImageIcon className="w-4 h-4 text-sky-400" />}
-                        {sf.fileType === 'other' && <FileText className="w-4 h-4 text-slate-400" />}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium text-slate-200 break-all leading-snug">{sf.file.name}</p>
-                        <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400 mt-0.5">
-                          <span className="font-mono">{formatFileSize(sf.compressedSize)}</span>
-                          <span>•</span>
-                          <span className="text-slate-400">폴더: {sf.folder}</span>
-                          {sf.originalSize > sf.compressedSize && (
-                            <>
-                              <span>•</span>
-                              <span className="text-emerald-400 font-semibold">
-                                -{Math.round(((sf.originalSize - sf.compressedSize) / sf.originalSize) * 100)}% 압축
+                {stagedFiles.map((sf, idx) => {
+                  const existingFile = files.find(
+                    (f) =>
+                      f.projectId === selectedProjectId &&
+                      f.fileName.toLowerCase() === sf.file.name.toLowerCase() &&
+                      f.status !== 'trash'
+                  );
+                  const nextVersion = existingFile ? (existingFile.version || 1) + 1 : 1;
+
+                  return (
+                    <div
+                      key={idx}
+                      className="flex items-center justify-between p-2.5 rounded-xl bg-slate-800/80 border border-slate-700/70 text-xs"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                        <div className="p-1.5 rounded-lg bg-slate-700/80 shrink-0">
+                          {sf.fileType === 'pdf' && <FileText className="w-4 h-4 text-red-400" />}
+                          {sf.fileType === 'excel' && <FileSpreadsheet className="w-4 h-4 text-emerald-400" />}
+                          {sf.fileType === 'image' && <ImageIcon className="w-4 h-4 text-sky-400" />}
+                          {sf.fileType === 'other' && <FileText className="w-4 h-4 text-slate-400" />}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <p className="font-medium text-slate-200 break-all leading-snug">{sf.file.name}</p>
+                            {existingFile ? (
+                              <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-bold font-mono text-[10px] border border-amber-500/30 shrink-0">
+                                덮어쓰기 (V{nextVersion})
                               </span>
-                            </>
-                          )}
+                            ) : (
+                              <span className="px-1.5 py-0.2 rounded bg-sky-500/20 text-sky-300 font-bold font-mono text-[10px] border border-sky-500/30 shrink-0">
+                                신규 (V1)
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400 mt-0.5">
+                            <span className="font-mono">{formatFileSize(sf.compressedSize)}</span>
+                            <span>•</span>
+                            <span className="text-slate-400">폴더: {sf.folder}</span>
+                            {sf.originalSize > sf.compressedSize && (
+                              <>
+                                <span>•</span>
+                                <span className="text-emerald-400 font-semibold">
+                                  -{Math.round(((sf.originalSize - sf.compressedSize) / sf.originalSize) * 100)}% 압축
+                                </span>
+                              </>
+                            )}
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveFile(idx)}
-                      disabled={isUploading}
-                      className="p-1 rounded-lg text-slate-400 hover:text-red-400 hover:bg-slate-700 transition-colors"
-                      title="제거"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-                ))}
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveFile(idx)}
+                        disabled={isUploading}
+                        className="p-1 rounded-lg text-slate-400 hover:text-red-400 hover:bg-slate-700 transition-colors"
+                        title="제거"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}

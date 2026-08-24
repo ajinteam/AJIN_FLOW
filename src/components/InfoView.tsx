@@ -43,6 +43,7 @@ interface InfoViewProps {
   canManage: boolean;
   onUpdateProjects: (projects: InfoProject[]) => void;
   onUpdateFiles: (files: InfoFile[]) => void;
+  onUpdateInfoData?: (projects: InfoProject[], files: InfoFile[]) => void;
 }
 
 export const InfoView: React.FC<InfoViewProps> = ({
@@ -53,6 +54,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
   canManage,
   onUpdateProjects,
   onUpdateFiles,
+  onUpdateInfoData,
 }) => {
   const [activeTab, setActiveTab] = useState<'active' | 'completed' | 'trash'>('active');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -321,7 +323,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
   // Restore Project from Completed or Trash to Active
   const handleRestoreProject = (projectId: string) => {
     const now = new Date().toISOString();
-    const updated = projects.map((p) =>
+    const updatedProjects = projects.map((p) =>
       p.id === projectId
         ? {
             ...p,
@@ -331,8 +333,24 @@ export const InfoView: React.FC<InfoViewProps> = ({
             updatedAt: now,
           }
         : p
-      );
-    onUpdateProjects(updated);
+    );
+    const updatedFiles = files.map((f) =>
+      f.projectId === projectId && f.status === 'trash'
+        ? {
+            ...f,
+            status: 'active' as const,
+            deletedAt: undefined,
+            updatedAt: now,
+          }
+        : f
+    );
+
+    if (onUpdateInfoData) {
+      onUpdateInfoData(updatedProjects, updatedFiles);
+    } else {
+      onUpdateProjects(updatedProjects);
+      onUpdateFiles(updatedFiles);
+    }
   };
 
   // Move Project to Trash (3-day retention)
@@ -369,8 +387,12 @@ export const InfoView: React.FC<InfoViewProps> = ({
           : f
       );
 
-      onUpdateProjects(updatedProjects);
-      onUpdateFiles(updatedFiles);
+      if (onUpdateInfoData) {
+        onUpdateInfoData(updatedProjects, updatedFiles);
+      } else {
+        onUpdateProjects(updatedProjects);
+        onUpdateFiles(updatedFiles);
+      }
     }
   };
 
@@ -414,21 +436,21 @@ export const InfoView: React.FC<InfoViewProps> = ({
     onUpdateFiles(updated);
   };
 
-  // Permanent Delete File immediately
+  // Permanent Delete File immediately (removes from R2 storage and Upstash Redis)
   const handlePermanentlyDeleteFile = async (fileId: string) => {
     const target = files.find((f) => f.id === fileId);
     if (!target) return;
 
-    if (confirm(`"${target.fileName}" 파일을 클라우드 및 시스템에서 영구 삭제하시겠습니까?`)) {
+    if (confirm(`"${target.fileName}" 파일을 클라우드 및 DB에서 영구 삭제하시겠습니까?`)) {
       await deleteFileFromServer(target.folder, target.fileName, target.storagePath).catch(() => {});
       const updated = files.filter((f) => f.id !== fileId);
       onUpdateFiles(updated);
     }
   };
 
-  // Permanent Delete Project immediately
+  // Permanent Delete Project immediately (removes project, all files from R2 storage and Upstash Redis)
   const handlePermanentlyDeleteProject = async (projectId: string) => {
-    if (confirm('프로젝트 및 연결된 모든 파일을 클라우드에서 영구 삭제하시겠습니까?')) {
+    if (confirm('프로젝트 및 연결된 모든 파일을 클라우드 및 DB에서 영구 삭제하시겠습니까?')) {
       const projectFiles = files.filter((f) => f.projectId === projectId);
       for (const pf of projectFiles) {
         await deleteFileFromServer(pf.folder, pf.fileName, pf.storagePath).catch(() => {});
@@ -437,12 +459,16 @@ export const InfoView: React.FC<InfoViewProps> = ({
       const updatedProjects = projects.filter((p) => p.id !== projectId);
       const updatedFiles = files.filter((f) => f.projectId !== projectId);
 
-      onUpdateProjects(updatedProjects);
-      onUpdateFiles(updatedFiles);
+      if (onUpdateInfoData) {
+        onUpdateInfoData(updatedProjects, updatedFiles);
+      } else {
+        onUpdateProjects(updatedProjects);
+        onUpdateFiles(updatedFiles);
+      }
     }
   };
 
-  // Empty entire Trash bin
+  // Empty entire Trash bin (removes all trashed files from R2 storage and cleans Upstash Redis)
   const handleEmptyTrash = async () => {
     if (confirm('휴지통의 모든 항목을 즉시 클라우드 및 DB에서 영구 삭제하시겠습니까?')) {
       for (const tf of trashedFiles) {
@@ -450,14 +476,20 @@ export const InfoView: React.FC<InfoViewProps> = ({
       }
       const updatedFiles = files.filter((f) => f.status !== 'trash');
       const updatedProjects = projects.filter((p) => p.status !== 'trash');
-      onUpdateFiles(updatedFiles);
-      onUpdateProjects(updatedProjects);
+
+      if (onUpdateInfoData) {
+        onUpdateInfoData(updatedProjects, updatedFiles);
+      } else {
+        onUpdateFiles(updatedFiles);
+        onUpdateProjects(updatedProjects);
+      }
     }
   };
 
-  // Upload multiple files & handle automatic overwriting
+  // Upload multiple files & handle automatic overwriting and version incrementing (V1, V2, ...)
   const handleUploadFiles = async (projectId: string, uploadedFilesList: File[]) => {
     let currentFilesState = [...files];
+    const now = new Date().toISOString();
 
     for (const rawFile of uploadedFilesList) {
       const { infoFile } = await uploadSingleFile(rawFile, projectId, currentUserInitials);
@@ -469,11 +501,49 @@ export const InfoView: React.FC<InfoViewProps> = ({
 
       if (existingIdx >= 0) {
         const oldFile = currentFilesState[existingIdx];
-        infoFile.version = (oldFile.version || 1) + 1;
-        infoFile.id = oldFile.id; // Maintain ID
+        const nextVersion = (oldFile.version || 1) + 1;
+
+        // Clean up old physical file if storagePath differs
+        if (oldFile.storagePath && oldFile.storagePath !== infoFile.storagePath) {
+          deleteFileFromServer(oldFile.folder, oldFile.fileName, oldFile.storagePath).catch(() => {});
+        }
+
+        const historyItem = {
+          version: nextVersion,
+          uploadedAt: now,
+          uploadedBy: currentUserInitials,
+          fileSize: infoFile.fileSize,
+        };
+
+        const existingHistory = oldFile.uploadHistory || [
+          {
+            version: oldFile.version || 1,
+            uploadedAt: oldFile.uploadedAt || oldFile.updatedAt || now,
+            uploadedBy: oldFile.uploadedBy,
+            fileSize: oldFile.fileSize,
+          },
+        ];
+
+        infoFile.id = oldFile.id; // Maintain constant file ID
+        infoFile.version = nextVersion; // e.g. V2, V3...
+        infoFile.uploadedAt = oldFile.uploadedAt || now; // Original upload date
+        infoFile.updatedAt = now; // Recent overwrite upload date
+        infoFile.uploadHistory = [...existingHistory, historyItem];
+
         currentFilesState[existingIdx] = infoFile;
-        console.log(`[Auto-Overwrite] File "${rawFile.name}" updated to v${infoFile.version}`);
+        console.log(`[Auto-Overwrite] File "${rawFile.name}" updated to V${infoFile.version} at ${now}`);
       } else {
+        infoFile.version = 1;
+        infoFile.uploadedAt = now;
+        infoFile.updatedAt = now;
+        infoFile.uploadHistory = [
+          {
+            version: 1,
+            uploadedAt: now,
+            uploadedBy: currentUserInitials,
+            fileSize: infoFile.fileSize,
+          },
+        ];
         currentFilesState = [infoFile, ...currentFilesState];
       }
     }
@@ -1023,14 +1093,35 @@ export const InfoView: React.FC<InfoViewProps> = ({
                                       {file.fileName}
                                     </p>
                                     <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400 mt-1">
+                                      <span
+                                        className={`px-1.5 py-0.2 rounded font-bold font-mono text-[10px] shrink-0 ${
+                                          file.version && file.version > 1
+                                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                            : 'bg-sky-500/20 text-sky-300 border border-sky-500/30'
+                                        }`}
+                                      >
+                                        V{file.version || 1}
+                                      </span>
                                       <span className="font-mono">{formatFileSize(file.fileSize)}</span>
                                       <span>•</span>
+                                      <span
+                                        className="text-slate-300 font-medium"
+                                        title={`업로드 일시: ${
+                                          file.updatedAt
+                                            ? format(parseISO(file.updatedAt), 'yyyy-MM-dd HH:mm:ss')
+                                            : file.uploadedAt
+                                            ? format(parseISO(file.uploadedAt), 'yyyy-MM-dd HH:mm:ss')
+                                            : ''
+                                        }`}
+                                      >
+                                        {file.updatedAt
+                                          ? format(parseISO(file.updatedAt), 'yyyy-MM-dd HH:mm')
+                                          : file.uploadedAt
+                                          ? format(parseISO(file.uploadedAt), 'yyyy-MM-dd HH:mm')
+                                          : '-'}
+                                      </span>
+                                      <span>•</span>
                                       <span>{file.uploadedBy}</span>
-                                      {file.version && file.version > 1 && (
-                                        <span className="px-1 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-mono text-[10px]">
-                                          v{file.version}
-                                        </span>
-                                      )}
                                     </div>
                                   </div>
                                 </div>
@@ -1091,6 +1182,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
       <UploadModal
         isOpen={isUploadModalOpen}
         projects={projects}
+        files={files}
         defaultProjectId={targetUploadProjectId}
         onClose={() => {
           setIsUploadModalOpen(false);
