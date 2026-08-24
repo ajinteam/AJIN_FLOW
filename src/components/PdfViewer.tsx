@@ -1,16 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, RotateCw, Loader2, AlertCircle, RefreshCw, Download } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, RotateCw, Loader2, AlertCircle } from 'lucide-react';
 
-// Configure PDF.js worker with bundled vite URL and robust CDN fallbacks matching exact version
+// Configure PDF.js worker
 if (typeof window !== 'undefined') {
   try {
     pdfjsLib.GlobalWorkerOptions.workerSrc =
       pdfjsWorker ||
       `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version || '6.2.108'}/build/pdf.worker.min.mjs`;
   } catch (err) {
-    console.warn('PDF.js worker initialization error:', err);
+    console.warn('PDF.js worker setup:', err);
   }
 }
 
@@ -22,20 +22,20 @@ interface PdfViewerProps {
 export const PdfViewer: React.FC<PdfViewerProps> = ({ fileUrl, fileName }) => {
   const [numPages, setNumPages] = useState<number>(0);
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const [zoom, setZoom] = useState<number>(1.2);
+  const [scale, setScale] = useState<number>(1.0);
   const [rotation, setRotation] = useState<number>(0);
   const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string>('');
-  const [pdfDoc, setPdfDoc] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pdfDoc, setPdfDoc] = useState<any>(null);
 
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const renderTaskRef = useRef<any>(null);
 
   // Load PDF Document
   useEffect(() => {
     let isCancelled = false;
     setLoading(true);
-    setError('');
+    setError(null);
     setCurrentPage(1);
 
     const loadDoc = async () => {
@@ -44,33 +44,35 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ fileUrl, fileName }) => {
 
         // Base64 data URL
         if (fileUrl.startsWith('data:application/pdf;base64,')) {
-          const base64Data = fileUrl.replace('data:application/pdf;base64,', '');
-          const binaryString = atob(base64Data);
-          const len = binaryString.length;
-          const bytes = new Uint8Array(len);
-          for (let i = 0; i < len; i++) {
+          const base64Data = fileUrl.split(',')[1];
+          const binaryString = window.atob(base64Data);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
             bytes[i] = binaryString.charCodeAt(i);
           }
           docSource = { data: bytes };
         } else {
-          // Fetch as ArrayBuffer for all URLs (relative path, http, https, R2, etc.)
+          // Fetch as ArrayBuffer for relative paths and URLs
           try {
             const resp = await fetch(fileUrl);
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const arrayBuf = await resp.arrayBuffer();
-            docSource = { data: new Uint8Array(arrayBuf) };
+            if (resp.ok) {
+              const arrayBuf = await resp.arrayBuffer();
+              docSource = { data: new Uint8Array(arrayBuf) };
+            } else {
+              docSource = { url: fileUrl };
+            }
           } catch (fetchErr) {
-            console.warn('Fetch as arrayBuffer failed, falling back to url string:', fetchErr);
-            docSource = { url: fileUrl, withCredentials: false };
+            console.warn('Direct fetch error, passing url:', fetchErr);
+            docSource = { url: fileUrl };
           }
         }
 
-        const cMapVersion = pdfjsLib.version || '6.2.108';
+        const cMapVer = pdfjsLib.version || '6.2.108';
         const loadingTask = pdfjsLib.getDocument({
           ...docSource,
-          cMapUrl: `https://cdn.jsdelivr.net/npm/pdfjs-dist@${cMapVersion}/cmaps/`,
+          cMapUrl: `https://cdn.jsdelivr.net/npm/pdfjs-dist@${cMapVer}/cmaps/`,
           cMapPacked: true,
-          standardFontDataUrl: `https://cdn.jsdelivr.net/npm/pdfjs-dist@${cMapVersion}/standard_fonts/`,
+          standardFontDataUrl: `https://cdn.jsdelivr.net/npm/pdfjs-dist@${cMapVer}/standard_fonts/`,
         });
 
         const doc = await loadingTask.promise;
@@ -82,12 +84,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ fileUrl, fileName }) => {
       } catch (err: any) {
         console.error('PDF load error:', err);
         if (!isCancelled) {
-          const errMsg = String(err?.message || '');
-          if (errMsg.includes('404') || errMsg.includes('Unexpected server response')) {
-            setError('클라우드 저장소에서 해당 PDF 도면 파일을 찾을 수 없습니다 (404). 도면을 새로 업로드하거나 클라우드 동기화(R2 동기화)를 진행해 주세요.');
-          } else {
-            setError('PDF 도면을 불러오는 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.');
-          }
+          setError('PDF 문서를 불러오는 중 오류가 발생했습니다.');
           setLoading(false);
         }
       }
@@ -100,7 +97,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ fileUrl, fileName }) => {
     };
   }, [fileUrl]);
 
-  // Render current page onto canvas
+  // Render Page
   useEffect(() => {
     if (!pdfDoc || !canvasRef.current) return;
 
@@ -109,40 +106,41 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ fileUrl, fileName }) => {
     const renderPage = async () => {
       try {
         if (renderTaskRef.current) {
-          try {
-            renderTaskRef.current.cancel();
-          } catch {}
+          renderTaskRef.current.cancel();
+          renderTaskRef.current = null;
         }
 
         const page = await pdfDoc.getPage(currentPage);
-        if (isCancelled || !canvasRef.current) return;
+        if (isCancelled) return;
 
-        const viewport = page.getViewport({ scale: zoom, rotation });
+        const viewport = page.getViewport({ scale: scale, rotation: rotation });
         const canvas = canvasRef.current;
+        if (!canvas) return;
+
         const context = canvas.getContext('2d');
         if (!context) return;
 
-        // Support high-DPI retina screens
-        const outputScale = window.devicePixelRatio || 1;
-        canvas.width = Math.floor(viewport.width * outputScale);
-        canvas.height = Math.floor(viewport.height * outputScale);
-        canvas.style.width = Math.floor(viewport.width) + 'px';
-        canvas.style.height = Math.floor(viewport.height) + 'px';
+        // High DPI support
+        const pixelRatio = window.devicePixelRatio || 1;
+        canvas.width = Math.floor(viewport.width * pixelRatio);
+        canvas.height = Math.floor(viewport.height * pixelRatio);
+        canvas.style.width = `${Math.floor(viewport.width)}px`;
+        canvas.style.height = `${Math.floor(viewport.height)}px`;
 
-        const transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : undefined;
+        context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
 
-        const renderContext: any = {
+        const renderContext = {
           canvasContext: context,
-          viewport,
-          transform,
+          viewport: viewport,
         };
 
-        const task = page.render(renderContext);
-        renderTaskRef.current = task;
-        await task.promise;
+        const renderTask = page.render(renderContext);
+        renderTaskRef.current = renderTask;
+
+        await renderTask.promise;
       } catch (err: any) {
-        if (err?.name !== 'RenderingCancelledException') {
-          console.warn('Page render error:', err);
+        if (err.name !== 'RenderingCancelledException') {
+          console.error('Page render error:', err);
         }
       }
     };
@@ -152,66 +150,56 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ fileUrl, fileName }) => {
     return () => {
       isCancelled = true;
       if (renderTaskRef.current) {
-        try {
-          renderTaskRef.current.cancel();
-        } catch {}
+        renderTaskRef.current.cancel();
+        renderTaskRef.current = null;
       }
     };
-  }, [pdfDoc, currentPage, zoom, rotation]);
+  }, [pdfDoc, currentPage, scale, rotation]);
 
-  const handlePrevPage = () => setCurrentPage((p) => Math.max(p - 1, 1));
-  const handleNextPage = () => setCurrentPage((p) => Math.min(p + 1, numPages));
-  const handleZoomIn = () => setZoom((z) => Math.min(z + 0.25, 3.5));
-  const handleZoomOut = () => setZoom((z) => Math.max(z - 0.25, 0.5));
-  const handleRotate = () => setRotation((r) => (r + 90) % 360);
+  const handlePrevPage = () => {
+    if (currentPage > 1) setCurrentPage((prev) => prev - 1);
+  };
+
+  const handleNextPage = () => {
+    if (currentPage < numPages) setCurrentPage((prev) => prev + 1);
+  };
+
+  const handleZoomIn = () => {
+    setScale((prev) => Math.min(prev + 0.25, 3.0));
+  };
+
+  const handleZoomOut = () => {
+    setScale((prev) => Math.max(prev - 0.25, 0.5));
+  };
+
+  const handleRotate = () => {
+    setRotation((prev) => (prev + 90) % 360);
+  };
 
   if (loading) {
     return (
-      <div className="w-full h-full flex flex-col items-center justify-center p-6 text-slate-300">
+      <div className="w-full h-full flex flex-col items-center justify-center p-8 text-slate-400">
         <Loader2 className="w-8 h-8 animate-spin text-sky-400 mb-3" />
-        <p className="text-sm font-medium">PDF 도면을 로딩하는 중입니다...</p>
+        <p className="text-sm font-medium">PDF 문서를 불러오는 중입니다...</p>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="w-full h-full flex flex-col items-center justify-center p-6 text-slate-300 text-center gap-4">
-        <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/20 max-w-md">
-          <AlertCircle className="w-8 h-8 text-rose-400 mx-auto mb-2" />
-          <h3 className="text-sm font-semibold text-rose-300 mb-1">{fileName}</h3>
-          <p className="text-xs text-slate-400 mb-4">{error}</p>
-          <div className="flex items-center justify-center gap-2">
-            <button
-              onClick={() => {
-                setError('');
-                setLoading(true);
-                setPdfDoc(null);
-              }}
-              className="px-3.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              다시 시도
-            </button>
-            <a
-              href={fileUrl}
-              download={fileName}
-              className="px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition-colors"
-            >
-              <Download className="w-3.5 h-3.5" />
-              다운로드
-            </a>
-          </div>
-        </div>
+      <div className="w-full h-full flex flex-col items-center justify-center p-8 text-slate-400">
+        <AlertCircle className="w-8 h-8 text-rose-400 mb-3" />
+        <p className="text-sm font-medium text-slate-300 mb-1">{fileName}</p>
+        <p className="text-xs text-slate-500">{error}</p>
       </div>
     );
   }
 
   return (
     <div className="w-full h-full flex flex-col items-center select-none overflow-hidden">
-      {/* Top Controls Bar */}
+      {/* Floating/Top Controls Bar */}
       <div className="w-full px-3 py-2 bg-slate-900/90 backdrop-blur border-b border-slate-800 flex items-center justify-between gap-2 shrink-0 z-10">
-        {/* Page Navigation */}
+        {/* Page Nav */}
         <div className="flex items-center gap-1.5">
           <button
             onClick={handlePrevPage}
@@ -244,7 +232,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ fileUrl, fileName }) => {
             <ZoomOut className="w-4 h-4" />
           </button>
           <span className="text-xs font-mono text-slate-400 px-1 hidden sm:inline-block">
-            {Math.round(zoom * 100)}%
+            {Math.round(scale * 100)}%
           </span>
           <button
             onClick={handleZoomIn}
