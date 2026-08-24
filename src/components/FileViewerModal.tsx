@@ -1,36 +1,47 @@
 import React, { useState, useEffect } from 'react';
 import { InfoFile } from '../types';
-import { X, Download, ZoomIn, ZoomOut, RotateCw, FileSpreadsheet, FileText, Image as ImageIcon, Search, Maximize2, Minimize2 } from 'lucide-react';
-import * as XLSX from 'xlsx';
+import {
+  X,
+  Download,
+  ZoomIn,
+  ZoomOut,
+  RotateCw,
+  FileSpreadsheet,
+  FileText,
+  Image as ImageIcon,
+  Maximize2,
+  Minimize2,
+  Clock,
+  Calendar,
+  Sparkles,
+} from 'lucide-react';
 import { formatFileSize } from '../lib/imageCompressor';
 import { PdfViewer } from './PdfViewer';
+import { ExcelPdfViewer } from './ExcelPdfViewer';
+import { format, parseISO } from 'date-fns';
 
 interface FileViewerModalProps {
   file: InfoFile | null;
   onClose: () => void;
+  canDownload?: boolean; // 읽기전용 사용자는 다운로드 버튼 비활성화/숨김
 }
 
-export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose }) => {
-  const [zoom, setZoom] = useState<number>(100);
-  const [rotation, setRotation] = useState<number>(0);
-  // Default to true so PC/Desktop opens in full-screen view (Requirement #3)
+export const FileViewerModal: React.FC<FileViewerModalProps> = ({
+  file,
+  onClose,
+  canDownload = true,
+}) => {
+  const [imageZoom, setImageZoom] = useState<number>(100);
+  const [imageRotation, setImageRotation] = useState<number>(0);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(true);
 
-  // Excel viewer state
-  const [excelSheets, setExcelSheets] = useState<{ name: string; data: any[][] }[]>([]);
-  const [activeSheetIndex, setActiveSheetIndex] = useState<number>(0);
-  const [excelSearch, setExcelSearch] = useState<string>('');
-  const [excelLoading, setExcelLoading] = useState<boolean>(false);
-  const [excelError, setExcelError] = useState<string>('');
-
-  // Mobile Back Button support (Requirement #4)
+  // Mobile Back Button support
   useEffect(() => {
     if (!file) return;
 
-    // Push history state when viewer opens
     window.history.pushState({ modal: 'file-viewer', fileId: file.id }, '');
 
-    const handlePopState = (e: PopStateEvent) => {
+    const handlePopState = () => {
       onClose();
     };
 
@@ -41,61 +52,14 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose 
   }, [file, onClose]);
 
   useEffect(() => {
-    setZoom(100);
-    setRotation(0);
-    setExcelSheets([]);
-    setActiveSheetIndex(0);
-    setExcelSearch('');
-    setExcelError('');
-
-    if (!file) return;
-
-    if (file.fileType === 'excel') {
-      loadExcelData(file);
-    }
+    setImageZoom(100);
+    setImageRotation(0);
   }, [file]);
-
-  const loadExcelData = async (fileObj: InfoFile) => {
-    setExcelLoading(true);
-    setExcelError('');
-    try {
-      let arrayBuffer: ArrayBuffer;
-
-      if (fileObj.fileUrl.startsWith('data:')) {
-        // Base64 data URL
-        const base64 = fileObj.fileUrl.split(',')[1];
-        const binaryString = window.atob(base64);
-        const len = binaryString.length;
-        const bytes = new Uint8Array(len);
-        for (let i = 0; i < len; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-        arrayBuffer = bytes.buffer;
-      } else {
-        const response = await fetch(fileObj.fileUrl);
-        if (!response.ok) throw new Error('파일을 불러올 수 없습니다.');
-        arrayBuffer = await response.arrayBuffer();
-      }
-
-      const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-      const parsedSheets = workbook.SheetNames.map((name) => {
-        const worksheet = workbook.Sheets[name];
-        const rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' }) as any[][];
-        return { name, data: rawData };
-      });
-
-      setExcelSheets(parsedSheets);
-    } catch (err: any) {
-      console.error('Excel parse error:', err);
-      setExcelError('엑셀 파일을 파싱하는 데 실패했습니다. 다운로드하여 확인해 주세요.');
-    } finally {
-      setExcelLoading(false);
-    }
-  };
 
   if (!file) return null;
 
   const handleDownload = () => {
+    if (!canDownload) return;
     const link = document.createElement('a');
     link.href = file.fileUrl;
     link.download = file.fileName;
@@ -104,53 +68,74 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose 
     document.body.removeChild(link);
   };
 
-  const handleZoomIn = () => setZoom((prev) => Math.min(prev + 25, 300));
-  const handleZoomOut = () => setZoom((prev) => Math.max(prev - 25, 50));
-  const handleRotate = () => setRotation((prev) => (prev + 90) % 360);
+  const handleImageZoomIn = () => setImageZoom((prev) => Math.min(prev + 25, 300));
+  const handleImageZoomOut = () => setImageZoom((prev) => Math.max(prev - 25, 50));
+  const handleImageRotate = () => setImageRotation((prev) => (prev + 90) % 360);
 
-  // Filter Excel data based on search
-  const currentSheet = excelSheets[activeSheetIndex];
-  const filteredRows = currentSheet
-    ? currentSheet.data.filter((row, idx) => {
-        if (idx === 0) return true; // Always show header row
-        if (!excelSearch.trim()) return true;
-        return row.some((cell) =>
-          String(cell || '').toLowerCase().includes(excelSearch.toLowerCase())
-        );
-      })
-    : [];
+  // Format date helper
+  const formattedUpdateDate = (() => {
+    try {
+      const rawDate = file.updatedAt || file.uploadedAt;
+      if (!rawDate) return '';
+      const d = typeof rawDate === 'string' ? parseISO(rawDate) : new Date(rawDate);
+      return format(d, 'yyyy-MM-dd HH:mm');
+    } catch {
+      return '';
+    }
+  })();
+
+  const isRevised = (file.version && file.version > 1) || (file.updatedAt && file.uploadedAt && file.updatedAt !== file.uploadedAt);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-0 md:p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-sm p-0 md:p-3">
       <div
-        className={`flex flex-col bg-slate-900 text-slate-100 border border-slate-700 shadow-2xl overflow-hidden transition-all duration-200 ${
+        className={`flex flex-col bg-slate-900 text-slate-100 border border-slate-700 shadow-2xl overflow-hidden transition-all duration-150 ${
           isFullscreen
             ? 'fixed inset-0 w-full h-full rounded-none'
-            : 'w-full h-full md:h-[92vh] md:max-w-6xl md:rounded-2xl'
+            : 'w-full h-full md:h-[94vh] md:max-w-7xl md:rounded-2xl'
         }`}
       >
-        {/* Top bar */}
-        <div className="flex items-center justify-between px-4 py-3 bg-slate-800/90 border-b border-slate-700 select-none shrink-0">
-          <div className="flex items-center gap-2.5 min-w-0 pr-2">
-            <div className="p-1.5 rounded-lg bg-slate-700 text-slate-200 shrink-0">
+        {/* Top Header Bar */}
+        <div className="flex items-center justify-between px-3 sm:px-4 py-2.5 bg-slate-850 border-b border-slate-800 select-none shrink-0 z-30">
+          {/* File Meta Info */}
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0 pr-2">
+            <div className="p-2 rounded-xl bg-slate-800 text-slate-200 shrink-0 border border-slate-700/60">
               {file.fileType === 'pdf' && <FileText className="w-5 h-5 text-red-400" />}
               {file.fileType === 'excel' && <FileSpreadsheet className="w-5 h-5 text-emerald-400" />}
               {file.fileType === 'image' && <ImageIcon className="w-5 h-5 text-sky-400" />}
               {file.fileType === 'other' && <FileText className="w-5 h-5 text-slate-400" />}
             </div>
+
             <div className="min-w-0">
-              <h2 className="font-semibold text-sm md:text-base text-slate-100 truncate">
-                {file.fileName}
-              </h2>
-              <div className="flex items-center gap-2 text-xs text-slate-400 whitespace-nowrap">
-                <span>{formatFileSize(file.fileSize)}</span>
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                <h2 className="font-bold text-sm sm:text-base text-slate-100 truncate">
+                  {file.fileName}
+                </h2>
+                {isRevised && (
+                  <span className="px-1.5 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] sm:text-xs font-bold whitespace-nowrap">
+                    v{file.version || 2} 수정본
+                  </span>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 text-[11px] sm:text-xs text-slate-400 mt-0.5">
+                <span className="font-mono">{formatFileSize(file.fileSize)}</span>
                 <span>•</span>
-                <span>업로더: {file.uploadedBy}</span>
-                {file.originalSize && file.originalSize > file.fileSize && (
+                <span>업로더: <strong className="text-slate-300">{file.uploadedBy}</strong></span>
+                {formattedUpdateDate && (
                   <>
                     <span>•</span>
-                    <span className="text-emerald-400 font-medium">
-                      최적화 완료 (-{Math.round(((file.originalSize - file.fileSize) / file.originalSize) * 100)}%)
+                    <span className="flex items-center gap-1 text-slate-300">
+                      <Clock className="w-3 h-3 text-slate-400" />
+                      {isRevised ? `최종 수정: ${formattedUpdateDate}` : `등록: ${formattedUpdateDate}`}
+                    </span>
+                  </>
+                )}
+                {file.fileType === 'excel' && (
+                  <>
+                    <span className="hidden sm:inline">•</span>
+                    <span className="hidden sm:inline-flex items-center gap-0.5 text-emerald-400 font-semibold">
+                      PDF 규격 문서 변환 뷰
                     </span>
                   </>
                 )}
@@ -158,57 +143,63 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose 
             </div>
           </div>
 
-          {/* Action buttons */}
-          <div className="flex items-center gap-1 shrink-0">
+          {/* Action Buttons (Right) */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            {/* Image zoom controls */}
             {file.fileType === 'image' && (
-              <>
+              <div className="flex items-center gap-1 bg-slate-800 p-0.5 rounded-lg border border-slate-700/60 mr-1">
                 <button
-                  onClick={handleZoomOut}
-                  className="p-2 rounded-lg text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                  onClick={handleImageZoomOut}
+                  className="p-1.5 text-slate-300 hover:text-white rounded transition-colors"
                   title="축소"
                 >
-                  <ZoomOut className="w-4 h-4" />
+                  <ZoomOut className="w-3.5 h-3.5" />
                 </button>
-                <span className="text-xs text-slate-400 font-mono px-1 min-w-[3rem] text-center hidden sm:inline-block">
-                  {zoom}%
+                <span className="text-xs text-slate-300 font-mono px-1 min-w-[2.5rem] text-center hidden sm:inline-block">
+                  {imageZoom}%
                 </span>
                 <button
-                  onClick={handleZoomIn}
-                  className="p-2 rounded-lg text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                  onClick={handleImageZoomIn}
+                  className="p-1.5 text-slate-300 hover:text-white rounded transition-colors"
                   title="확대"
                 >
-                  <ZoomIn className="w-4 h-4" />
+                  <ZoomIn className="w-3.5 h-3.5" />
                 </button>
                 <button
-                  onClick={handleRotate}
-                  className="p-2 rounded-lg text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                  onClick={handleImageRotate}
+                  className="p-1.5 text-slate-300 hover:text-white rounded transition-colors"
                   title="회전"
                 >
-                  <RotateCw className="w-4 h-4" />
+                  <RotateCw className="w-3.5 h-3.5" />
                 </button>
-              </>
+              </div>
             )}
 
-            <button
-              onClick={handleDownload}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs md:text-sm font-medium transition-colors ml-1"
-              title="다운로드"
-            >
-              <Download className="w-4 h-4" />
-              <span className="hidden sm:inline">다운로드</span>
-            </button>
+            {/* Requirement #4: 읽기 전용 사용자는 다운로드 버튼 숨김 */}
+            {canDownload && (
+              <button
+                onClick={handleDownload}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs sm:text-sm font-semibold transition-all shadow-sm active:scale-95"
+                title="원본 다운로드"
+              >
+                <Download className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                <span className="hidden sm:inline">다운로드</span>
+              </button>
+            )}
 
+            {/* Fullscreen toggle (Desktop) */}
             <button
               onClick={() => setIsFullscreen(!isFullscreen)}
-              className="p-2 rounded-lg text-slate-300 hover:bg-slate-700 hover:text-white transition-colors hidden md:block"
+              className="p-2 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-white transition-colors hidden md:block"
               title={isFullscreen ? '창 모드' : '전체화면'}
             >
               {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
             </button>
 
+            {/* Close modal */}
             <button
               onClick={onClose}
-              className="p-2 rounded-lg text-slate-300 hover:bg-red-500/20 hover:text-red-400 transition-colors ml-1"
+              className="p-2 rounded-xl text-slate-300 hover:bg-rose-500/20 hover:text-rose-400 transition-colors"
               title="닫기"
             >
               <X className="w-5 h-5" />
@@ -216,173 +207,58 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose 
           </div>
         </div>
 
-        {/* Content body */}
-        <div className="flex-1 overflow-auto bg-slate-950 flex flex-col relative">
-          {/* 1. PDF Viewer with HTML5 Canvas (No '열기' button, Instant Mobile Rendering) */}
+        {/* Modal Main Viewer Body */}
+        <div className="flex-1 overflow-hidden bg-slate-950 flex flex-col relative">
+          {/* 1. PDF Viewer with Pure Canvas (Immediate Mobile Rendering without External '열기' button) */}
           {file.fileType === 'pdf' && (
             <PdfViewer fileUrl={file.fileUrl} fileName={file.fileName} />
           )}
 
-          {/* 2. Image Viewer */}
+          {/* 2. Excel Viewer: High-Fidelity PDF Document Style with Continuous Multi-Page Scroll */}
+          {file.fileType === 'excel' && (
+            <ExcelPdfViewer fileUrl={file.fileUrl} fileName={file.fileName} />
+          )}
+
+          {/* 3. Image Viewer with Pan & Zoom */}
           {file.fileType === 'image' && (
             <div className="w-full h-full flex items-center justify-center overflow-auto p-4 select-none touch-pan-x touch-pan-y">
               <div
                 style={{
-                  transform: `scale(${zoom / 100}) rotate(${rotation}deg)`,
-                  transition: 'transform 0.15s ease-out',
+                  transform: `scale(${imageZoom / 100}) rotate(${imageRotation}deg)`,
+                  transition: 'transform 0.1s ease-out',
                 }}
                 className="flex items-center justify-center max-w-full max-h-full"
               >
                 <img
                   src={file.fileUrl}
                   alt={file.fileName}
-                  className="max-w-full max-h-[80vh] object-contain rounded shadow-2xl border border-slate-800"
+                  className="max-w-full max-h-[82vh] object-contain rounded-lg shadow-2xl border border-slate-800"
                 />
-              </div>
-            </div>
-          )}
-
-          {/* 3. Excel Viewer */}
-          {file.fileType === 'excel' && (
-            <div className="flex-1 flex flex-col h-full overflow-hidden">
-              {/* Sheet selector and search bar */}
-              <div className="p-3 bg-slate-900 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2 shrink-0">
-                {/* Sheets tabs */}
-                <div className="flex items-center gap-1 overflow-x-auto max-w-full py-1">
-                  {excelSheets.map((sheet, sIdx) => (
-                    <button
-                      key={sheet.name}
-                      onClick={() => setActiveSheetIndex(sIdx)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
-                        activeSheetIndex === sIdx
-                          ? 'bg-emerald-600 text-white shadow-sm'
-                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                      }`}
-                    >
-                      {sheet.name}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Table search filter */}
-                <div className="relative w-full sm:w-64">
-                  <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type="text"
-                    value={excelSearch}
-                    onChange={(e) => setExcelSearch(e.target.value)}
-                    placeholder="내용 / 도번 / 품명 검색..."
-                    className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-100 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500 placeholder-slate-500"
-                  />
-                  {excelSearch && (
-                    <button
-                      onClick={() => setExcelSearch('')}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs"
-                    >
-                      ×
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* Table Data display */}
-              <div className="flex-1 overflow-auto p-2">
-                {excelLoading && (
-                  <div className="flex flex-col items-center justify-center h-64 text-slate-400 gap-2">
-                    <div className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-                    <span className="text-sm">엑셀 데이터를 분석하고 있습니다...</span>
-                  </div>
-                )}
-
-                {excelError && (
-                  <div className="flex flex-col items-center justify-center h-64 text-red-400 gap-3 p-4 text-center">
-                    <p className="text-sm">{excelError}</p>
-                    <button
-                      onClick={handleDownload}
-                      className="px-4 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-200 text-sm hover:bg-slate-700 flex items-center gap-2"
-                    >
-                      <Download className="w-4 h-4" />
-                      엑셀 원본 다운로드
-                    </button>
-                  </div>
-                )}
-
-                {!excelLoading && !excelError && currentSheet && (
-                  <div className="border border-slate-800 rounded-lg overflow-hidden bg-slate-900 shadow-md">
-                    <div className="overflow-x-auto max-h-[calc(90vh-140px)]">
-                      <table className="w-full text-left border-collapse text-xs">
-                        <thead>
-                          {filteredRows[0] && (
-                            <tr className="bg-slate-800/90 sticky top-0 z-10 border-b border-slate-700">
-                              <th className="py-2.5 px-3 font-semibold text-slate-300 border-r border-slate-700/50 w-12 text-center">
-                                #
-                              </th>
-                              {filteredRows[0].map((header: any, cIdx: number) => (
-                                <th
-                                  key={cIdx}
-                                  className="py-2.5 px-3 font-semibold text-emerald-400 border-r border-slate-700/50 whitespace-nowrap min-w-[100px]"
-                                >
-                                  {header !== '' && header !== null && header !== undefined
-                                    ? String(header)
-                                    : `열 ${cIdx + 1}`}
-                                </th>
-                              ))}
-                            </tr>
-                          )}
-                        </thead>
-                        <tbody className="divide-y divide-slate-800">
-                          {filteredRows.slice(1).map((row, rIdx) => (
-                            <tr
-                              key={rIdx}
-                              className="hover:bg-slate-800/60 transition-colors odd:bg-slate-900/40 even:bg-slate-900/90"
-                            >
-                              <td className="py-2 px-3 text-slate-500 border-r border-slate-800 text-center font-mono select-none">
-                                {rIdx + 1}
-                              </td>
-                              {row.map((cell: any, cIdx: number) => (
-                                <td
-                                  key={cIdx}
-                                  className="py-2 px-3 text-slate-200 border-r border-slate-800 whitespace-nowrap"
-                                >
-                                  {cell !== '' && cell !== null && cell !== undefined
-                                    ? String(cell)
-                                    : '-'}
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    <div className="p-2 bg-slate-800/70 border-t border-slate-800 text-xs text-slate-400 flex items-center justify-between">
-                      <span>총 {filteredRows.length > 0 ? filteredRows.length - 1 : 0}행 표시 중</span>
-                      {excelSearch && (
-                        <span className="text-emerald-400 font-medium">검색 필터 적용됨</span>
-                      )}
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
           )}
 
           {/* 4. Other File types */}
           {file.fileType === 'other' && (
-            <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center gap-4">
-              <FileText className="w-16 h-16 text-slate-500" />
-              <div className="max-w-md">
-                <h3 className="text-base font-medium text-slate-200 mb-1">{file.fileName}</h3>
-                <p className="text-xs text-slate-400 mb-4">
-                  미리보기를 지원하지 않는 파일 형식입니다. 다운로드하여 확인해 주세요.
-                </p>
+            <div className="w-full h-full flex flex-col items-center justify-center p-8 text-center text-slate-300">
+              <FileText className="w-16 h-16 text-slate-500 mb-4" />
+              <h3 className="text-base font-semibold text-slate-200 mb-1">{file.fileName}</h3>
+              <p className="text-xs text-slate-400 mb-4">
+                미리보기를 지원하지 않는 형식입니다. 원본 파일을 확인해 주세요.
+              </p>
+              {canDownload ? (
                 <button
                   onClick={handleDownload}
-                  className="px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-sm font-medium transition-colors inline-flex items-center gap-2"
+                  className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5"
                 >
                   <Download className="w-4 h-4" />
-                  파일 다운로드
+                  <span>다운로드하여 확인</span>
                 </button>
-              </div>
+              ) : (
+                <span className="text-xs text-slate-500 bg-slate-900 px-3 py-1.5 rounded-lg border border-slate-800">
+                  읽기 전용 계정은 다운로드가 제한되어 있습니다.
+                </span>
+              )}
             </div>
           )}
         </div>

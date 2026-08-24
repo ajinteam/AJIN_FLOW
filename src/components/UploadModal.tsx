@@ -1,12 +1,25 @@
 import React, { useState, useRef } from 'react';
-import { InfoProject } from '../types';
-import { Upload, X, FileText, FileSpreadsheet, Image as ImageIcon, CheckCircle, AlertCircle, Sparkles, Folder, ArrowRight } from 'lucide-react';
+import { InfoProject, InfoFile } from '../types';
+import {
+  Upload,
+  X,
+  FileText,
+  FileSpreadsheet,
+  Image as ImageIcon,
+  CheckCircle,
+  AlertCircle,
+  Sparkles,
+  Folder,
+  ArrowRight,
+  RefreshCw,
+} from 'lucide-react';
 import { compressImage, formatFileSize } from '../lib/imageCompressor';
 import { detectFileTypeAndFolder } from '../lib/api';
 
 interface UploadModalProps {
   isOpen: boolean;
   projects: InfoProject[];
+  existingFiles?: InfoFile[];
   defaultProjectId?: string;
   onClose: () => void;
   onUploadComplete: (projectId: string, files: File[]) => Promise<void>;
@@ -26,6 +39,7 @@ interface StagedFile {
 export const UploadModal: React.FC<UploadModalProps> = ({
   isOpen,
   projects,
+  existingFiles = [],
   defaultProjectId,
   onClose,
   onUploadComplete,
@@ -131,9 +145,21 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const activeProjects = projects.filter((p) => p.status === 'active');
   const totalOriginalSize = stagedFiles.reduce((acc, f) => acc + f.originalSize, 0);
   const totalCompressedSize = stagedFiles.reduce((acc, f) => acc + f.compressedSize, 0);
-  const totalSavedPercent = totalOriginalSize > 0 
-    ? Math.max(0, Math.round(((totalOriginalSize - totalCompressedSize) / totalOriginalSize) * 100))
-    : 0;
+  const totalSavedPercent =
+    totalOriginalSize > 0
+      ? Math.max(0, Math.round(((totalOriginalSize - totalCompressedSize) / totalOriginalSize) * 100))
+      : 0;
+
+  // Check if a staged file will overwrite an existing file in the selected project
+  const getExistingFileInfo = (fileName: string) => {
+    if (!selectedProjectId) return null;
+    return existingFiles.find(
+      (f) =>
+        f.projectId === selectedProjectId &&
+        f.fileName.toLowerCase() === fileName.toLowerCase() &&
+        f.status !== 'trash'
+    );
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
@@ -146,7 +172,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             </div>
             <div>
               <h2 className="font-semibold text-slate-100 text-base">파일 업로드 (도면 / 사양 / 사진)</h2>
-              <p className="text-xs text-slate-400">PDF 도면, 엑셀 사양서, 최적화 현장 사진을 등록합니다.</p>
+              <p className="text-xs text-slate-400">동일한 파일명 업로드 시 자동으로 덮어쓰고 날짜가 갱신됩니다.</p>
             </div>
           </div>
           <button
@@ -161,7 +187,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         {/* Content Body */}
         <div className="p-5 space-y-4 overflow-y-auto flex-1">
           {error && (
-            <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-xs flex items-center gap-2">
+            <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-center gap-2">
               <AlertCircle className="w-4 h-4 shrink-0" />
               <span>{error}</span>
             </div>
@@ -245,13 +271,14 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                   PDF 도면 (.pdf) • 엑셀 사양서 (.xlsx, .xls) • 현장 사진 (.jpg, .png)
                 </p>
               </div>
-              <div className="flex items-center gap-2 mt-1">
+              <div className="flex flex-wrap items-center justify-center gap-2 mt-1">
                 <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
                   <Sparkles className="w-3 h-3" />
-                  사진 자동 용량 최적화 (초고속 업로드)
+                  사진 자동 최적화
                 </span>
-                <span className="inline-flex items-center text-[11px] text-slate-400 bg-slate-800 px-2 py-0.5 rounded-md border border-slate-700">
-                  동일 파일명 자동 덮어쓰기 지원
+                <span className="inline-flex items-center gap-1 text-[11px] text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/20">
+                  <RefreshCw className="w-3 h-3" />
+                  동일 파일명 자동 덮어쓰기 & 수정일시 갱신
                 </span>
               </div>
             </div>
@@ -264,53 +291,62 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                 <span>선택된 파일 ({stagedFiles.length}개)</span>
                 {totalSavedPercent > 0 && (
                   <span className="text-emerald-400 font-medium">
-                    사진 압축 절감: {formatFileSize(totalOriginalSize)} → {formatFileSize(totalCompressedSize)} (-{totalSavedPercent}%)
+                    사진 압축: {formatFileSize(totalOriginalSize)} → {formatFileSize(totalCompressedSize)} (-{totalSavedPercent}%)
                   </span>
                 )}
               </div>
 
               <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
-                {stagedFiles.map((sf, idx) => (
-                  <div
-                    key={idx}
-                    className="flex items-center justify-between p-2.5 rounded-xl bg-slate-800/80 border border-slate-700/70 text-xs"
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0 pr-2">
-                      <div className="p-1.5 rounded-lg bg-slate-700/80 shrink-0">
-                        {sf.fileType === 'pdf' && <FileText className="w-4 h-4 text-red-400" />}
-                        {sf.fileType === 'excel' && <FileSpreadsheet className="w-4 h-4 text-emerald-400" />}
-                        {sf.fileType === 'image' && <ImageIcon className="w-4 h-4 text-sky-400" />}
-                        {sf.fileType === 'other' && <FileText className="w-4 h-4 text-slate-400" />}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium text-slate-200 break-all leading-snug">{sf.file.name}</p>
-                        <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400 mt-0.5">
-                          <span className="font-mono">{formatFileSize(sf.compressedSize)}</span>
-                          <span>•</span>
-                          <span className="text-slate-400">폴더: {sf.folder}</span>
-                          {sf.originalSize > sf.compressedSize && (
-                            <>
-                              <span>•</span>
-                              <span className="text-emerald-400 font-semibold">
-                                -{Math.round(((sf.originalSize - sf.compressedSize) / sf.originalSize) * 100)}% 압축
+                {stagedFiles.map((sf, idx) => {
+                  const existing = getExistingFileInfo(sf.file.name);
+                  const nextVersion = existing ? (existing.version || 1) + 1 : 1;
+
+                  return (
+                    <div
+                      key={idx}
+                      className="flex items-center justify-between p-2.5 rounded-xl bg-slate-800/80 border border-slate-700/70 text-xs"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                        <div className="p-1.5 rounded-lg bg-slate-700/80 shrink-0">
+                          {sf.fileType === 'pdf' && <FileText className="w-4 h-4 text-red-400" />}
+                          {sf.fileType === 'excel' && <FileSpreadsheet className="w-4 h-4 text-emerald-400" />}
+                          {sf.fileType === 'image' && <ImageIcon className="w-4 h-4 text-sky-400" />}
+                          {sf.fileType === 'other' && <FileText className="w-4 h-4 text-slate-400" />}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <p className="font-medium text-slate-200 break-all leading-snug">{sf.file.name}</p>
+                            {existing && (
+                              <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold whitespace-nowrap">
+                                덮어쓰기 (v{nextVersion})
                               </span>
-                            </>
-                          )}
+                            )}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400 mt-0.5">
+                            <span className="font-mono">{formatFileSize(sf.compressedSize)}</span>
+                            <span>•</span>
+                            <span className="text-slate-400">폴더: {sf.folder}</span>
+                            {existing && (
+                              <span className="text-amber-400 font-medium">
+                                • 기존 버전 대체 & 수정일 갱신
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveFile(idx)}
-                      disabled={isUploading}
-                      className="p-1 rounded-lg text-slate-400 hover:text-red-400 hover:bg-slate-700 transition-colors"
-                      title="제거"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-                ))}
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveFile(idx)}
+                        disabled={isUploading}
+                        className="p-1 rounded-lg text-slate-400 hover:text-red-400 hover:bg-slate-700 transition-colors"
+                        title="제거"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
