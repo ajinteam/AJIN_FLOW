@@ -167,6 +167,105 @@ export async function syncFilesFromR2(): Promise<{
   }
 }
 
+export async function uploadFileInChunks(
+  file: File,
+  folder: string,
+  onProgress?: (percent: number) => void
+): Promise<{ storagePath: string; fileUrl: string; cleanFileName: string } | null> {
+  try {
+    const CHUNK_SIZE = 2.5 * 1024 * 1024; // 2.5MB per chunk (always safe for Vercel's 4.5MB limit)
+
+    // 1. Start multipart upload
+    const startRes = await fetch('/api/upload-chunk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'start',
+        fileName: file.name,
+        folder,
+        contentType: file.type || 'application/octet-stream',
+      }),
+    });
+
+    if (!startRes.ok) {
+      console.warn('Chunk start failed:', await startRes.text());
+      return null;
+    }
+
+    const { uploadId, key, cleanFileName } = await startRes.json();
+    const totalParts = Math.ceil(file.size / CHUNK_SIZE);
+    const parts: { partNumber: number; eTag: string }[] = [];
+
+    for (let i = 0; i < totalParts; i++) {
+      const start = i * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, file.size);
+      const chunkBlob = file.slice(start, end);
+
+      const base64Chunk = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(chunkBlob);
+      });
+
+      const partRes = await fetch('/api/upload-chunk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'part',
+          uploadId,
+          key,
+          partNumber: i + 1,
+          base64Chunk,
+        }),
+      });
+
+      if (!partRes.ok) {
+        console.error(`Part ${i + 1} upload failed`);
+        await fetch('/api/upload-chunk', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'abort', uploadId, key }),
+        }).catch(() => {});
+        return null;
+      }
+
+      const partData = await partRes.json();
+      parts.push({ partNumber: i + 1, eTag: partData.eTag });
+
+      if (onProgress) {
+        onProgress(Math.round(((i + 1) / totalParts) * 100));
+      }
+    }
+
+    // 3. Complete multipart upload
+    const completeRes = await fetch('/api/upload-chunk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'complete',
+        uploadId,
+        key,
+        parts,
+        folder,
+        cleanFileName,
+      }),
+    });
+
+    if (!completeRes.ok) {
+      console.error('Complete chunk upload failed');
+      return null;
+    }
+
+    const completeData = await completeRes.json();
+    console.log(`[R2 Chunked Upload] Successfully uploaded ${file.name} to Cloudflare R2 (${formatFileSize(file.size)})`);
+    return completeData;
+  } catch (err) {
+    console.error('Chunk upload error:', err);
+    return null;
+  }
+}
+
 export async function uploadSingleFile(
   file: File,
   projectId: string,
@@ -206,11 +305,11 @@ export async function uploadSingleFile(
     }
   }
 
-  // 3. STEP A: Direct Presigned Upload to Cloudflare R2 (Bypasses Vercel 4.5MB limit for 10MB, 20MB, 50MB+ files)
   let serverStoragePath = `${folder}/${Date.now()}_${file.name}`;
   let fileUrl = '';
-  let directR2Success = false;
+  let r2Uploaded = false;
 
+  // 3. STEP A: Direct Presigned Upload (Fastest if R2 CORS is allowed)
   try {
     const presignRes = await fetch('/api/presign', {
       method: 'POST',
@@ -226,7 +325,6 @@ export async function uploadSingleFile(
     if (presignRes.ok) {
       const presignData = await presignRes.json();
       if (presignData.isDirectR2 && presignData.presignedUrl) {
-        // Upload directly from browser to Cloudflare R2!
         const uploadRes = await fetch(presignData.presignedUrl, {
           method: 'PUT',
           headers: {
@@ -236,21 +334,31 @@ export async function uploadSingleFile(
         });
 
         if (uploadRes.ok) {
-          directR2Success = true;
+          r2Uploaded = true;
           serverStoragePath = presignData.storagePath;
           fileUrl = presignData.fileUrl;
-          console.log(`[R2 Direct Upload] Successfully uploaded ${file.name} directly to Cloudflare R2 (${formatFileSize(processedFile.size)})`);
+          console.log(`[R2 Direct Upload] Successfully uploaded ${file.name} to Cloudflare R2`);
         }
       }
     }
   } catch (presignErr) {
-    console.warn('[R2 Direct Upload] Presign attempt failed, attempting fallback:', presignErr);
+    console.warn('[R2 Direct Upload] Presign failed, trying chunked upload:', presignErr);
   }
 
-  // STEP B: Fallback if Direct R2 upload was not available or failed
-  if (!directR2Success) {
-    if (!dataUrl && processedFile.size < 15 * 1024 * 1024) {
-      // Only generate base64 if reasonable size
+  // 4. STEP B: Chunked Multipart Upload (Bypasses Vercel 4.5MB limit for 10MB, 20MB, 50MB+ even without R2 CORS)
+  if (!r2Uploaded && processedFile.size > 2 * 1024 * 1024) {
+    console.log(`[R2 Chunked Upload] Starting chunked upload for ${file.name} (${formatFileSize(processedFile.size)})...`);
+    const chunkResult = await uploadFileInChunks(processedFile, folder, onProgress);
+    if (chunkResult) {
+      r2Uploaded = true;
+      serverStoragePath = chunkResult.storagePath;
+      fileUrl = chunkResult.fileUrl;
+    }
+  }
+
+  // 5. STEP C: Standard base64 upload for smaller files (< 2MB)
+  if (!r2Uploaded) {
+    if (!dataUrl && processedFile.size < 4 * 1024 * 1024) {
       try {
         dataUrl = await new Promise((resolve, reject) => {
           const reader = new FileReader();
@@ -280,6 +388,7 @@ export async function uploadSingleFile(
           const json = await res.json();
           serverStoragePath = json.storagePath || serverStoragePath;
           fileUrl = json.fileUrl || fileUrl;
+          r2Uploaded = true;
         }
       } catch (err) {
         console.warn('Server upload error, using local data URL fallback:', err);

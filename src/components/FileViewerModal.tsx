@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { InfoFile } from '../types';
-import { X, Download, ZoomIn, ZoomOut, RotateCw, FileSpreadsheet, FileText, Image as ImageIcon, Search, Maximize2, Minimize2, ExternalLink } from 'lucide-react';
+import { X, Download, ZoomIn, ZoomOut, RotateCw, FileSpreadsheet, FileText, Image as ImageIcon, Search, Maximize2, Minimize2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { formatFileSize } from '../lib/imageCompressor';
+import { PdfViewer } from './PdfViewer';
 
 interface FileViewerModalProps {
   file: InfoFile | null;
@@ -217,42 +218,9 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose 
 
         {/* Content body */}
         <div className="flex-1 overflow-auto bg-slate-950 flex flex-col relative">
-          {/* 1. PDF Viewer */}
+          {/* 1. PDF Viewer with HTML5 Canvas (No '열기' button, Instant Mobile Rendering) */}
           {file.fileType === 'pdf' && (
-            <div className="w-full h-full flex flex-col items-center justify-between p-2">
-              <div className="w-full flex items-center justify-between px-2 py-1.5 mb-1.5 bg-slate-800/80 rounded-lg text-xs text-slate-300">
-                <span className="text-slate-400">모바일에서 도면이 바로 안 보일 경우:</span>
-                <div className="flex items-center gap-1.5">
-                  <a
-                    href={file.fileUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-2.5 py-1 rounded bg-sky-600 hover:bg-sky-500 text-white font-medium transition-colors"
-                  >
-                    새 창으로 원본 열기
-                  </a>
-                  {file.fileUrl.startsWith('http') && (
-                    <a
-                      href={`https://docs.google.com/viewer?url=${encodeURIComponent(file.fileUrl)}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="px-2.5 py-1 rounded bg-slate-700 hover:bg-slate-600 text-sky-300 font-medium transition-colors"
-                    >
-                      Google 뷰어
-                    </a>
-                  )}
-                </div>
-              </div>
-              <iframe
-                src={
-                  file.fileUrl.startsWith('http') && !file.fileUrl.startsWith(window.location.origin)
-                    ? `https://docs.google.com/viewer?url=${encodeURIComponent(file.fileUrl)}&embedded=true`
-                    : `${file.fileUrl}#toolbar=1&navpanes=0`
-                }
-                className="w-full flex-1 border-0 rounded-lg bg-slate-900 shadow-inner"
-                title={file.fileName}
-              />
-            </div>
+            <PdfViewer fileUrl={file.fileUrl} fileName={file.fileName} />
           )}
 
           {/* 2. Image Viewer */}

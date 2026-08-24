@@ -243,29 +243,139 @@ async function startServer() {
     }
   });
 
-  // --- FILE DELETE API ---
-  app.delete("/api/files/:folder/:fileName", async (req, res) => {
+  // --- MULTIPART CHUNKED UPLOAD API (for 10MB, 20MB, 50MB+ without size limit) ---
+  app.post("/api/upload-chunk", async (req, res) => {
     try {
-      const { folder, fileName } = req.params;
-      const decodedFileName = decodeURIComponent(fileName);
+      const { action } = req.body;
+      const { getR2S3Client } = await import("./src/lib/r2Presign.js").catch(async () => {
+        return await import("./src/lib/r2Presign");
+      });
+      const r2 = getR2S3Client();
 
-      // Delete from local disk
-      const localFilePath = path.join(UPLOADS_BASE, folder, decodedFileName);
+      if (!r2) {
+        return res.status(400).json({ error: "Cloudflare R2 is not configured" });
+      }
+
+      const {
+        CreateMultipartUploadCommand,
+        UploadPartCommand,
+        CompleteMultipartUploadCommand,
+        AbortMultipartUploadCommand,
+      } = await import("@aws-sdk/client-s3");
+
+      if (action === "start") {
+        const { fileName, folder, contentType } = req.body;
+        const validFolders = ["info-pdf", "info-excel", "info-image"];
+        const targetFolder = validFolders.includes(folder) ? folder : "info-pdf";
+        const cleanFileName = `${Date.now()}_${fileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+        const key = `${targetFolder}/${cleanFileName}`;
+
+        const command = new CreateMultipartUploadCommand({
+          Bucket: r2.bucket,
+          Key: key,
+          ContentType: contentType || "application/octet-stream",
+        });
+        const resp = await r2.client.send(command);
+        return res.json({
+          uploadId: resp.UploadId,
+          key,
+          cleanFileName,
+          folder: targetFolder,
+        });
+      }
+
+      if (action === "part") {
+        const { uploadId, key, partNumber, base64Chunk } = req.body;
+        const pureBase64 = base64Chunk.includes(",") ? base64Chunk.split(",")[1] : base64Chunk;
+        const buffer = Buffer.from(pureBase64, "base64");
+
+        const command = new UploadPartCommand({
+          Bucket: r2.bucket,
+          Key: key,
+          UploadId: uploadId,
+          PartNumber: Number(partNumber),
+          Body: buffer,
+        });
+        const resp = await r2.client.send(command);
+        return res.json({
+          partNumber: Number(partNumber),
+          eTag: resp.ETag,
+        });
+      }
+
+      if (action === "complete") {
+        const { uploadId, key, parts, folder, cleanFileName } = req.body;
+        const command = new CompleteMultipartUploadCommand({
+          Bucket: r2.bucket,
+          Key: key,
+          UploadId: uploadId,
+          MultipartUpload: {
+            Parts: parts.map((p: any) => ({
+              PartNumber: p.partNumber,
+              ETag: p.eTag,
+            })),
+          },
+        });
+        await r2.client.send(command);
+        const finalUrl = r2.publicUrl
+          ? `${r2.publicUrl.replace(/\/$/, "")}/${key}`
+          : `/api/files/${folder}/${encodeURIComponent(cleanFileName)}`;
+
+        return res.json({
+          success: true,
+          storagePath: key,
+          fileUrl: finalUrl,
+          fileName: cleanFileName,
+        });
+      }
+
+      if (action === "abort") {
+        const { uploadId, key } = req.body;
+        if (uploadId && key) {
+          await r2.client.send(
+            new AbortMultipartUploadCommand({
+              Bucket: r2.bucket,
+              Key: key,
+              UploadId: uploadId,
+            })
+          );
+        }
+        return res.json({ success: true });
+      }
+
+      return res.status(400).json({ error: "Invalid action" });
+    } catch (e: any) {
+      console.error("Upload chunk error:", e);
+      return res.status(500).json({ error: e?.message || "Failed to process chunk" });
+    }
+  });
+
+  // --- DELETE FILE API (From R2 and Local) ---
+  app.post("/api/delete-file", async (req, res) => {
+    try {
+      const { storagePath, folder, fileName } = req.body;
+      const targetKey = storagePath || (folder && fileName ? `${folder}/${fileName}` : "");
+      if (!targetKey) {
+        return res.status(400).json({ error: "Missing storagePath or folder/fileName" });
+      }
+
+      const targetFolder = targetKey.split("/")[0] || folder || "info-pdf";
+      const targetFileName = targetKey.split("/")[1] || fileName;
+
+      // Delete from local
+      const localFilePath = path.join(UPLOADS_BASE, targetFolder, targetFileName);
       if (fs.existsSync(localFilePath)) {
         try {
           fs.unlinkSync(localFilePath);
-        } catch (e) {
-          console.warn("Could not delete local file:", e);
-        }
+        } catch (e) {}
       }
 
-      // Delete from Cloudflare R2
-      await deleteFromR2(folder, decodedFileName);
-
-      res.json({ success: true, message: `File ${folder}/${decodedFileName} deleted successfully` });
-    } catch (error: any) {
-      console.error("File delete error:", error);
-      res.status(500).json({ error: "Failed to delete file" });
+      // Delete from R2
+      await deleteFromR2(targetFolder, targetFileName);
+      return res.json({ success: true, deletedKey: targetKey });
+    } catch (e: any) {
+      console.error("Delete error:", e);
+      return res.status(500).json({ error: e?.message || "Failed to delete" });
     }
   });
 
