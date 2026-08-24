@@ -82,7 +82,12 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ fileUrl, fileName }) => {
       } catch (err: any) {
         console.error('PDF load error:', err);
         if (!isCancelled) {
-          setError('PDF 도면을 불러오는 중 오류가 발생했습니다. 다시 시도해 주세요.');
+          const errMsg = String(err?.message || '');
+          if (errMsg.includes('404') || errMsg.includes('Unexpected server response')) {
+            setError('클라우드 저장소에서 해당 PDF 도면 파일을 찾을 수 없습니다 (404). 도면을 새로 업로드하거나 클라우드 동기화(R2 동기화)를 진행해 주세요.');
+          } else {
+            setError('PDF 도면을 불러오는 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.');
+          }
           setLoading(false);
         }
       }

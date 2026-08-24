@@ -107,18 +107,51 @@ export async function deleteFromR2(folder: string, fileName: string): Promise<bo
 }
 
 export async function getFromR2(folder: string, fileName: string) {
-  const key = `${folder}/${fileName}`;
-  if (s3Client) {
-    try {
-      const command = new GetObjectCommand({
-        Bucket: BUCKET_NAME,
-        Key: key,
-      });
-      const response = await s3Client.send(command);
-      return response;
-    } catch (err) {
-      console.error(`[R2] Get object failed for ${key}:`, err);
-      return null;
+  let client = s3Client;
+  if (!client) {
+    const currentEndpoint = getR2Endpoint();
+    const currentAccessKeyId = (process.env.R2_ACCESS_KEY_ID || '').trim();
+    const currentSecretAccessKey = (process.env.R2_SECRET_ACCESS_KEY || '').trim();
+    if (currentEndpoint && currentAccessKeyId && currentSecretAccessKey) {
+      try {
+        client = new S3Client({
+          region: 'auto',
+          endpoint: currentEndpoint,
+          credentials: {
+            accessKeyId: currentAccessKeyId,
+            secretAccessKey: currentSecretAccessKey,
+          },
+        });
+        s3Client = client;
+      } catch (e) {
+        console.error('[R2] Client init on demand failed:', e);
+      }
+    }
+  }
+
+  if (client) {
+    const keysToTry = [
+      `${folder}/${fileName}`,
+      fileName.includes('/') ? fileName : null,
+      // If filename has timestamp prefix like 1787528476542_..., also try without prefix
+      fileName.replace(/^[0-9]+_/, `${folder}/`),
+      // Or just raw fileName directly
+      fileName,
+    ].filter(Boolean) as string[];
+
+    for (const key of keysToTry) {
+      try {
+        const command = new GetObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: key,
+        });
+        const response = await client.send(command);
+        if (response && response.Body) {
+          return response;
+        }
+      } catch (err: any) {
+        // Continue trying next key variation
+      }
     }
   }
   return null;
