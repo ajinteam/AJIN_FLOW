@@ -1,17 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
-import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
-import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, RotateCw, Loader2, AlertCircle } from 'lucide-react';
+import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, RotateCw, Loader2, AlertCircle, RefreshCw, Download } from 'lucide-react';
 
-// Configure PDF.js worker with bundled vite URL and robust cdn fallbacks
-try {
-  if (typeof window !== 'undefined') {
+// Configure PDF.js worker with bundled vite URL and robust CDN fallbacks matching exact version
+if (typeof window !== 'undefined') {
+  try {
     pdfjsLib.GlobalWorkerOptions.workerSrc =
       pdfjsWorker ||
-      `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version || '4.10.38'}/pdf.worker.min.mjs`;
+      `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version || '6.2.108'}/build/pdf.worker.min.mjs`;
+  } catch (err) {
+    console.warn('PDF.js worker initialization error:', err);
   }
-} catch {
-  // Ignore fallback error
 }
 
 interface PdfViewerProps {
@@ -40,7 +40,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ fileUrl, fileName }) => {
 
     const loadDoc = async () => {
       try {
-        let docSource: any = fileUrl;
+        let docSource: any = null;
 
         // Base64 data URL
         if (fileUrl.startsWith('data:application/pdf;base64,')) {
@@ -52,21 +52,27 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ fileUrl, fileName }) => {
             bytes[i] = binaryString.charCodeAt(i);
           }
           docSource = { data: bytes };
-        } else if (fileUrl.startsWith('http')) {
-          // Fetch as arrayBuffer to bypass CORS restrictions
+        } else {
+          // Fetch as ArrayBuffer for all URLs (relative path, http, https, R2, etc.)
           try {
             const resp = await fetch(fileUrl);
-            if (resp.ok) {
-              const arrayBuf = await resp.arrayBuffer();
-              docSource = { data: new Uint8Array(arrayBuf) };
-            }
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const arrayBuf = await resp.arrayBuffer();
+            docSource = { data: new Uint8Array(arrayBuf) };
           } catch (fetchErr) {
-            console.warn('Direct fetch failed, falling back to URL parameter:', fetchErr);
+            console.warn('Fetch as arrayBuffer failed, falling back to url string:', fetchErr);
             docSource = { url: fileUrl, withCredentials: false };
           }
         }
 
-        const loadingTask = pdfjsLib.getDocument(docSource);
+        const cMapVersion = pdfjsLib.version || '6.2.108';
+        const loadingTask = pdfjsLib.getDocument({
+          ...docSource,
+          cMapUrl: `https://cdn.jsdelivr.net/npm/pdfjs-dist@${cMapVersion}/cmaps/`,
+          cMapPacked: true,
+          standardFontDataUrl: `https://cdn.jsdelivr.net/npm/pdfjs-dist@${cMapVersion}/standard_fonts/`,
+        });
+
         const doc = await loadingTask.promise;
 
         if (isCancelled) return;
@@ -76,7 +82,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ fileUrl, fileName }) => {
       } catch (err: any) {
         console.error('PDF load error:', err);
         if (!isCancelled) {
-          setError('PDF 문서를 불러오는 중 오류가 발생했습니다.');
+          setError('PDF 도면을 불러오는 중 오류가 발생했습니다. 다시 시도해 주세요.');
           setLoading(false);
         }
       }
@@ -165,26 +171,32 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ fileUrl, fileName }) => {
 
   if (error) {
     return (
-      <div className="w-full h-full flex flex-col items-center justify-center p-4 text-slate-300">
-        <div className="w-full h-full flex flex-col bg-slate-900 rounded-xl overflow-hidden">
-          <div className="p-3 bg-slate-800 flex items-center justify-between text-xs border-b border-slate-700">
-            <span className="text-amber-400 flex items-center gap-1">
-              <AlertCircle className="w-4 h-4" /> 내장 뷰어로 표시합니다
-            </span>
+      <div className="w-full h-full flex flex-col items-center justify-center p-6 text-slate-300 text-center gap-4">
+        <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/20 max-w-md">
+          <AlertCircle className="w-8 h-8 text-rose-400 mx-auto mb-2" />
+          <h3 className="text-sm font-semibold text-rose-300 mb-1">{fileName}</h3>
+          <p className="text-xs text-slate-400 mb-4">{error}</p>
+          <div className="flex items-center justify-center gap-2">
+            <button
+              onClick={() => {
+                setError('');
+                setLoading(true);
+                setPdfDoc(null);
+              }}
+              className="px-3.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              다시 시도
+            </button>
             <a
               href={fileUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-3 py-1 bg-sky-600 hover:bg-sky-500 text-white rounded font-medium"
+              download={fileName}
+              className="px-3.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition-colors"
             >
-              새 창으로 열기
+              <Download className="w-3.5 h-3.5" />
+              다운로드
             </a>
           </div>
-          <iframe
-            src={`${fileUrl}#toolbar=1&navpanes=0`}
-            className="w-full flex-1 border-0"
-            title={fileName}
-          />
         </div>
       </div>
     );
@@ -192,9 +204,9 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ fileUrl, fileName }) => {
 
   return (
     <div className="w-full h-full flex flex-col items-center select-none overflow-hidden">
-      {/* Floating/Top Controls Bar */}
+      {/* Top Controls Bar */}
       <div className="w-full px-3 py-2 bg-slate-900/90 backdrop-blur border-b border-slate-800 flex items-center justify-between gap-2 shrink-0 z-10">
-        {/* Page Nav */}
+        {/* Page Navigation */}
         <div className="flex items-center gap-1.5">
           <button
             onClick={handlePrevPage}
