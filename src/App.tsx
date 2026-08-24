@@ -12,7 +12,7 @@ import {
   InfoProject,
   InfoFile,
 } from './types';
-import { format, parseISO } from 'date-fns';
+import { format, parseISO, isValid } from 'date-fns';
 import {
   Plus,
   Settings as SettingsIcon,
@@ -38,6 +38,26 @@ import { InfoView } from './components/InfoView';
 import { UserManagementModal } from './components/UserManagementModal';
 import { fetchInfoData, saveInfoData } from './lib/api';
 import * as Processes from './processes';
+
+function safeFormatDate(val: any, formatStr: string = 'yyyy-MM-dd', fallback: string = ''): string {
+  if (!val) return fallback;
+  try {
+    const parsed = typeof val === 'string' ? parseISO(val) : new Date(val);
+    if (isValid(parsed)) {
+      return format(parsed, formatStr);
+    }
+    // If standard ISO parse fails, attempt direct new Date parse
+    const directDate = new Date(val);
+    if (isValid(directDate)) {
+      return format(directDate, formatStr);
+    }
+    return String(val).split('T')[0] || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+const FLOW_LOCAL_STORAGE_KEY = 'ajin_flow26_local_backup';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -257,22 +277,44 @@ export default function App() {
     }
   }, []);
 
-  // Load Flow Data (ajin_flow26_Backup)
+  // Load Flow Data (ajin_flow26_Backup with local storage fallback)
   const loadFlowData = useCallback(async () => {
+    // 1. First load from local storage cache if available
+    try {
+      const localCache = localStorage.getItem(FLOW_LOCAL_STORAGE_KEY);
+      if (localCache) {
+        const parsed = JSON.parse(localCache);
+        setFlowData({
+          users: Array.isArray(parsed.users) ? parsed.users : [],
+          projects: Array.isArray(parsed.projects) ? parsed.projects : [],
+          processes: Array.isArray(parsed.processes) ? parsed.processes : [],
+          tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [],
+          processParts: Array.isArray(parsed.processParts) ? parsed.processParts : [],
+        });
+      }
+    } catch (e) {
+      console.warn('Local flow cache read error:', e);
+    }
+
+    // 2. Fetch latest from server/Upstash Redis
     try {
       const res = await fetch('/api/data');
       if (res.ok) {
         const json = await res.json();
-        setFlowData({
+        const latestData = {
           users: Array.isArray(json.users) ? json.users : [],
           projects: Array.isArray(json.projects) ? json.projects : [],
           processes: Array.isArray(json.processes) ? json.processes : [],
           tasks: Array.isArray(json.tasks) ? json.tasks : [],
           processParts: Array.isArray(json.processParts) ? json.processParts : [],
-        });
+        };
+        setFlowData(latestData);
+        try {
+          localStorage.setItem(FLOW_LOCAL_STORAGE_KEY, JSON.stringify(latestData));
+        } catch (_) {}
       }
     } catch (e) {
-      console.error('Failed to load flow data:', e);
+      console.error('Failed to load flow data from server:', e);
     }
   }, []);
 
@@ -353,6 +395,9 @@ export default function App() {
       processParts: updates.processParts !== undefined ? updates.processParts : flowData.processParts,
     };
     setFlowData(updated);
+    try {
+      localStorage.setItem(FLOW_LOCAL_STORAGE_KEY, JSON.stringify(updated));
+    } catch (_) {}
     try {
       await fetch('/api/data', {
         method: 'POST',
@@ -1181,11 +1226,11 @@ export default function App() {
                           {project.foDateHistory &&
                             project.foDateHistory.map((d, i) => (
                               <span key={i} className="text-slate-400">
-                                {d ? format(parseISO(d), 'yyyy-MM-dd') : ''}
+                                {safeFormatDate(d, 'yyyy-MM-dd')}
                               </span>
                             ))}
                           <span className="text-rose-500 font-bold">
-                            {project.foDate ? format(parseISO(project.foDate), 'yyyy-MM-dd') : '연도 - 월 - 일'}
+                            {safeFormatDate(project.foDate, 'yyyy-MM-dd', '연도 - 월 - 일')}
                           </span>
                         </div>
                       </div>
@@ -1236,7 +1281,7 @@ export default function App() {
                               >
                                 {proc?.targetDateHistory && proc.targetDateHistory.length > 0 && (
                                   <span className="text-[10px] text-slate-400 line-through">
-                                    {format(parseISO(proc.targetDateHistory[proc.targetDateHistory.length - 1]), 'yyyy-MM-dd')}
+                                    {safeFormatDate(proc.targetDateHistory[proc.targetDateHistory.length - 1], 'yyyy-MM-dd')}
                                   </span>
                                 )}
                                 <input
@@ -1446,7 +1491,7 @@ export default function App() {
                   <div className="space-y-0.5 text-[11px] text-slate-300 font-mono">
                     {selectedFlowProject.foDateHistory.map((h, i) => (
                       <div key={i}>
-                        {i + 1}. {h ? format(parseISO(h), 'yyyy-MM-dd') : '미정'}
+                        {i + 1}. {safeFormatDate(h, 'yyyy-MM-dd', '미정')}
                       </div>
                     ))}
                   </div>

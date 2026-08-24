@@ -96,7 +96,11 @@ const ProcessTable = ({
   const [isSaving, setIsSaving] = React.useState(false);
 
   React.useEffect(() => {
-    const sorted = [...parts].sort((a, b) => a.order - b.order);
+    const sorted = [...parts].sort((a, b) => {
+      const orderA = typeof a.order === 'number' && !isNaN(a.order) ? a.order : 0;
+      const orderB = typeof b.order === 'number' && !isNaN(b.order) ? b.order : 0;
+      return orderA - orderB;
+    });
     setLocalParts(sorted);
   }, [parts]);
 
