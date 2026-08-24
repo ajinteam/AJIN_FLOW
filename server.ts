@@ -410,20 +410,8 @@ async function startServer() {
       if (r2Object && r2Object.Body) {
         res.setHeader("Content-Type", r2Object.ContentType || contentType);
         res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(decodedFileName)}"`);
-        if (r2Object.ContentLength) {
-          res.setHeader("Content-Length", r2Object.ContentLength);
-        }
-        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-
-        const body = r2Object.Body as any;
-        if (typeof body.pipe === "function") {
-          return body.pipe(res);
-        } else if (typeof body.transformToByteArray === "function") {
-          const bytes = await body.transformToByteArray();
-          return res.send(Buffer.from(bytes));
-        } else {
-          return res.send(body);
-        }
+        const stream = r2Object.Body as any;
+        return stream.pipe(res);
       }
 
       return res.status(404).json({ error: "File not found" });

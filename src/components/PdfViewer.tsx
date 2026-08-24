@@ -1,17 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
-import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, RotateCw, Loader2, AlertCircle } from 'lucide-react';
 
-// Configure PDF.js worker
-if (typeof window !== 'undefined') {
-  try {
+// Configure PDF.js worker with bundled vite URL and robust cdn fallbacks
+try {
+  if (typeof window !== 'undefined') {
     pdfjsLib.GlobalWorkerOptions.workerSrc =
       pdfjsWorker ||
-      `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version || '6.2.108'}/build/pdf.worker.min.mjs`;
-  } catch (err) {
-    console.warn('PDF.js worker setup:', err);
+      `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version || '4.10.38'}/pdf.worker.min.mjs`;
   }
+} catch {
+  // Ignore fallback error
 }
 
 interface PdfViewerProps {
@@ -22,59 +22,51 @@ interface PdfViewerProps {
 export const PdfViewer: React.FC<PdfViewerProps> = ({ fileUrl, fileName }) => {
   const [numPages, setNumPages] = useState<number>(0);
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const [scale, setScale] = useState<number>(1.0);
+  const [zoom, setZoom] = useState<number>(1.2);
   const [rotation, setRotation] = useState<number>(0);
   const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-  const [pdfDoc, setPdfDoc] = useState<any>(null);
+  const [error, setError] = useState<string>('');
+  const [pdfDoc, setPdfDoc] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
 
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const renderTaskRef = useRef<any>(null);
 
   // Load PDF Document
   useEffect(() => {
     let isCancelled = false;
     setLoading(true);
-    setError(null);
+    setError('');
     setCurrentPage(1);
 
     const loadDoc = async () => {
       try {
-        let docSource: any = null;
+        let docSource: any = fileUrl;
 
         // Base64 data URL
         if (fileUrl.startsWith('data:application/pdf;base64,')) {
-          const base64Data = fileUrl.split(',')[1];
-          const binaryString = window.atob(base64Data);
-          const bytes = new Uint8Array(binaryString.length);
-          for (let i = 0; i < binaryString.length; i++) {
+          const base64Data = fileUrl.replace('data:application/pdf;base64,', '');
+          const binaryString = atob(base64Data);
+          const len = binaryString.length;
+          const bytes = new Uint8Array(len);
+          for (let i = 0; i < len; i++) {
             bytes[i] = binaryString.charCodeAt(i);
           }
           docSource = { data: bytes };
-        } else {
-          // Fetch as ArrayBuffer for relative paths and URLs
+        } else if (fileUrl.startsWith('http')) {
+          // Fetch as arrayBuffer to bypass CORS restrictions
           try {
             const resp = await fetch(fileUrl);
             if (resp.ok) {
               const arrayBuf = await resp.arrayBuffer();
               docSource = { data: new Uint8Array(arrayBuf) };
-            } else {
-              docSource = { url: fileUrl };
             }
           } catch (fetchErr) {
-            console.warn('Direct fetch error, passing url:', fetchErr);
-            docSource = { url: fileUrl };
+            console.warn('Direct fetch failed, falling back to URL parameter:', fetchErr);
+            docSource = { url: fileUrl, withCredentials: false };
           }
         }
 
-        const cMapVer = pdfjsLib.version || '6.2.108';
-        const loadingTask = pdfjsLib.getDocument({
-          ...docSource,
-          cMapUrl: `https://cdn.jsdelivr.net/npm/pdfjs-dist@${cMapVer}/cmaps/`,
-          cMapPacked: true,
-          standardFontDataUrl: `https://cdn.jsdelivr.net/npm/pdfjs-dist@${cMapVer}/standard_fonts/`,
-        });
-
+        const loadingTask = pdfjsLib.getDocument(docSource);
         const doc = await loadingTask.promise;
 
         if (isCancelled) return;
@@ -97,7 +89,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ fileUrl, fileName }) => {
     };
   }, [fileUrl]);
 
-  // Render Page
+  // Render current page onto canvas
   useEffect(() => {
     if (!pdfDoc || !canvasRef.current) return;
 
@@ -106,41 +98,40 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ fileUrl, fileName }) => {
     const renderPage = async () => {
       try {
         if (renderTaskRef.current) {
-          renderTaskRef.current.cancel();
-          renderTaskRef.current = null;
+          try {
+            renderTaskRef.current.cancel();
+          } catch {}
         }
 
         const page = await pdfDoc.getPage(currentPage);
-        if (isCancelled) return;
+        if (isCancelled || !canvasRef.current) return;
 
-        const viewport = page.getViewport({ scale: scale, rotation: rotation });
+        const viewport = page.getViewport({ scale: zoom, rotation });
         const canvas = canvasRef.current;
-        if (!canvas) return;
-
         const context = canvas.getContext('2d');
         if (!context) return;
 
-        // High DPI support
-        const pixelRatio = window.devicePixelRatio || 1;
-        canvas.width = Math.floor(viewport.width * pixelRatio);
-        canvas.height = Math.floor(viewport.height * pixelRatio);
-        canvas.style.width = `${Math.floor(viewport.width)}px`;
-        canvas.style.height = `${Math.floor(viewport.height)}px`;
+        // Support high-DPI retina screens
+        const outputScale = window.devicePixelRatio || 1;
+        canvas.width = Math.floor(viewport.width * outputScale);
+        canvas.height = Math.floor(viewport.height * outputScale);
+        canvas.style.width = Math.floor(viewport.width) + 'px';
+        canvas.style.height = Math.floor(viewport.height) + 'px';
 
-        context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+        const transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : undefined;
 
-        const renderContext = {
+        const renderContext: any = {
           canvasContext: context,
-          viewport: viewport,
+          viewport,
+          transform,
         };
 
-        const renderTask = page.render(renderContext);
-        renderTaskRef.current = renderTask;
-
-        await renderTask.promise;
+        const task = page.render(renderContext);
+        renderTaskRef.current = task;
+        await task.promise;
       } catch (err: any) {
-        if (err.name !== 'RenderingCancelledException') {
-          console.error('Page render error:', err);
+        if (err?.name !== 'RenderingCancelledException') {
+          console.warn('Page render error:', err);
         }
       }
     };
@@ -150,47 +141,51 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ fileUrl, fileName }) => {
     return () => {
       isCancelled = true;
       if (renderTaskRef.current) {
-        renderTaskRef.current.cancel();
-        renderTaskRef.current = null;
+        try {
+          renderTaskRef.current.cancel();
+        } catch {}
       }
     };
-  }, [pdfDoc, currentPage, scale, rotation]);
+  }, [pdfDoc, currentPage, zoom, rotation]);
 
-  const handlePrevPage = () => {
-    if (currentPage > 1) setCurrentPage((prev) => prev - 1);
-  };
-
-  const handleNextPage = () => {
-    if (currentPage < numPages) setCurrentPage((prev) => prev + 1);
-  };
-
-  const handleZoomIn = () => {
-    setScale((prev) => Math.min(prev + 0.25, 3.0));
-  };
-
-  const handleZoomOut = () => {
-    setScale((prev) => Math.max(prev - 0.25, 0.5));
-  };
-
-  const handleRotate = () => {
-    setRotation((prev) => (prev + 90) % 360);
-  };
+  const handlePrevPage = () => setCurrentPage((p) => Math.max(p - 1, 1));
+  const handleNextPage = () => setCurrentPage((p) => Math.min(p + 1, numPages));
+  const handleZoomIn = () => setZoom((z) => Math.min(z + 0.25, 3.5));
+  const handleZoomOut = () => setZoom((z) => Math.max(z - 0.25, 0.5));
+  const handleRotate = () => setRotation((r) => (r + 90) % 360);
 
   if (loading) {
     return (
-      <div className="w-full h-full flex flex-col items-center justify-center p-8 text-slate-400">
+      <div className="w-full h-full flex flex-col items-center justify-center p-6 text-slate-300">
         <Loader2 className="w-8 h-8 animate-spin text-sky-400 mb-3" />
-        <p className="text-sm font-medium">PDF 문서를 불러오는 중입니다...</p>
+        <p className="text-sm font-medium">PDF 도면을 로딩하는 중입니다...</p>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="w-full h-full flex flex-col items-center justify-center p-8 text-slate-400">
-        <AlertCircle className="w-8 h-8 text-rose-400 mb-3" />
-        <p className="text-sm font-medium text-slate-300 mb-1">{fileName}</p>
-        <p className="text-xs text-slate-500">{error}</p>
+      <div className="w-full h-full flex flex-col items-center justify-center p-4 text-slate-300">
+        <div className="w-full h-full flex flex-col bg-slate-900 rounded-xl overflow-hidden">
+          <div className="p-3 bg-slate-800 flex items-center justify-between text-xs border-b border-slate-700">
+            <span className="text-amber-400 flex items-center gap-1">
+              <AlertCircle className="w-4 h-4" /> 내장 뷰어로 표시합니다
+            </span>
+            <a
+              href={fileUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3 py-1 bg-sky-600 hover:bg-sky-500 text-white rounded font-medium"
+            >
+              새 창으로 열기
+            </a>
+          </div>
+          <iframe
+            src={`${fileUrl}#toolbar=1&navpanes=0`}
+            className="w-full flex-1 border-0"
+            title={fileName}
+          />
+        </div>
       </div>
     );
   }
@@ -232,7 +227,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ fileUrl, fileName }) => {
             <ZoomOut className="w-4 h-4" />
           </button>
           <span className="text-xs font-mono text-slate-400 px-1 hidden sm:inline-block">
-            {Math.round(scale * 100)}%
+            {Math.round(zoom * 100)}%
           </span>
           <button
             onClick={handleZoomIn}
