@@ -1167,7 +1167,11 @@ export const InfoView: React.FC<InfoViewProps> = ({
       )}
 
       {/* MODALS */}
-      <FileViewerModal file={viewingFile} onClose={() => setViewingFile(null)} />
+      <FileViewerModal
+        file={viewingFile}
+        onClose={() => setViewingFile(null)}
+        canDownload={canManage}
+      />
 
       <ProjectModal
         isOpen={isProjectModalOpen}

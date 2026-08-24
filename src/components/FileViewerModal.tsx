@@ -9,9 +9,10 @@ import { PdfViewer } from './PdfViewer';
 interface FileViewerModalProps {
   file: InfoFile | null;
   onClose: () => void;
+  canDownload?: boolean;
 }
 
-export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose }) => {
+export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose, canDownload = true }) => {
   const [zoom, setZoom] = useState<number>(100);
   const [rotation, setRotation] = useState<number>(0);
   // Default to true so PC/Desktop opens in full-screen view (Requirement #3)
@@ -210,14 +211,16 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose 
               </>
             )}
 
-            <button
-              onClick={handleDownload}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs md:text-sm font-medium transition-colors ml-1"
-              title="다운로드"
-            >
-              <Download className="w-4 h-4" />
-              <span className="hidden sm:inline">다운로드</span>
-            </button>
+            {canDownload && (
+              <button
+                onClick={handleDownload}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs md:text-sm font-medium transition-colors ml-1"
+                title="다운로드"
+              >
+                <Download className="w-4 h-4" />
+                <span className="hidden sm:inline">다운로드</span>
+              </button>
+            )}
 
             <button
               onClick={() => setIsFullscreen(!isFullscreen)}
@@ -318,13 +321,15 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose 
                 {excelError && (
                   <div className="flex flex-col items-center justify-center h-64 text-red-400 gap-3 p-4 text-center">
                     <p className="text-sm">{excelError}</p>
-                    <button
-                      onClick={handleDownload}
-                      className="px-4 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-200 text-sm hover:bg-slate-700 flex items-center gap-2"
-                    >
-                      <Download className="w-4 h-4" />
-                      엑셀 원본 다운로드
-                    </button>
+                    {canDownload && (
+                      <button
+                        onClick={handleDownload}
+                        className="px-4 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-200 text-sm hover:bg-slate-700 flex items-center gap-2"
+                      >
+                        <Download className="w-4 h-4" />
+                        엑셀 원본 다운로드
+                      </button>
+                    )}
                   </div>
                 )}
 
@@ -394,15 +399,17 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose 
               <div className="max-w-md">
                 <h3 className="text-base font-medium text-slate-200 mb-1">{file.fileName}</h3>
                 <p className="text-xs text-slate-400 mb-4">
-                  미리보기를 지원하지 않는 파일 형식입니다. 다운로드하여 확인해 주세요.
+                  미리보기를 지원하지 않는 파일 형식입니다.{canDownload ? ' 다운로드하여 확인해 주세요.' : ''}
                 </p>
-                <button
-                  onClick={handleDownload}
-                  className="px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-sm font-medium transition-colors inline-flex items-center gap-2"
-                >
-                  <Download className="w-4 h-4" />
-                  파일 다운로드
-                </button>
+                {canDownload && (
+                  <button
+                    onClick={handleDownload}
+                    className="px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-sm font-medium transition-colors inline-flex items-center gap-2"
+                  >
+                    <Download className="w-4 h-4" />
+                    파일 다운로드
+                  </button>
+                )}
               </div>
             </div>
           )}
