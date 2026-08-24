@@ -26,6 +26,7 @@ export interface InfoProject {
   model: string;          // 모델명 (e.g. AJ-2026, Alpha-Pro)
   machineType: string;    // 기종 / 설비 (e.g. CNC-5200, 사출 1호기)
   shipmentDate: string;   // 선적날짜 (YYYY-MM-DD)
+  previousShipmentDates?: string[]; // 이전 선적날짜 기록
   productionQty: string | number; // 생산수량 (e.g. 5000 or "5,000 EA")
   notes?: string;         // 비고/메모
   status: InfoProjectStatus;

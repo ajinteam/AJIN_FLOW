@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { InfoProject } from '../types';
-import { X, FolderPlus, Save, Calendar, Hash, Tag, Cpu, FileText } from 'lucide-react';
+import { X, FolderPlus, Save, Calendar, Hash, Tag, Cpu, FileText, History } from 'lucide-react';
+import { format, parseISO } from 'date-fns';
 
 interface ProjectModalProps {
   isOpen: boolean;
@@ -169,6 +170,26 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
               />
             </div>
           </div>
+
+          {/* Previous shipment date history if available */}
+          {projectToEdit?.previousShipmentDates && projectToEdit.previousShipmentDates.length > 0 && (
+            <div className="p-3 rounded-xl bg-slate-800/80 border border-slate-700/70">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-400 mb-1.5">
+                <History className="w-3.5 h-3.5" />
+                <span>이전 선적일 변경 이력:</span>
+              </div>
+              <div className="flex flex-wrap gap-2 text-xs font-mono">
+                {projectToEdit.previousShipmentDates.map((prevDate, idx) => (
+                  <span
+                    key={idx}
+                    className="px-2 py-0.5 rounded bg-slate-900 text-slate-400 line-through border border-slate-700/60"
+                  >
+                    {prevDate ? format(parseISO(prevDate), 'yyyy-MM-dd') : prevDate}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* 비고 / 메모 (Notes) */}
           <div>

@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { UserConfig } from '../types';
-import { Users, Plus, Trash2, X, Shield, Check, Lock, Edit3 } from 'lucide-react';
+import { Users, Plus, Trash2, X, Shield, Check, Lock, Edit3, Eye, EyeOff, Key } from 'lucide-react';
 
 interface UserManagementModalProps {
   isOpen: boolean;
   users: UserConfig[];
+  currentUserId?: string;
   onClose: () => void;
   onSaveUsers: (users: UserConfig[]) => void;
 }
@@ -19,6 +20,8 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
   const [initials, setInitials] = useState('');
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
+  const [showFormPassword, setShowFormPassword] = useState(true); // Default visible so admin can see while creating/editing
+  const [visiblePasswords, setVisiblePasswords] = useState<Record<string, boolean>>({});
   const [canAccessFlow, setCanAccessFlow] = useState(true);
   const [canAccessInfo, setCanAccessInfo] = useState(true);
   const [canManageInfo, setCanManageInfo] = useState(false);
@@ -28,9 +31,22 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
 
   React.useEffect(() => {
     setLocalUsers(users);
+    // Initialize visible passwords map so Master/5200 can see them immediately
+    const initialVisibility: Record<string, boolean> = {};
+    users.forEach((u) => {
+      initialVisibility[u.id] = true;
+    });
+    setVisiblePasswords(initialVisibility);
   }, [users, isOpen]);
 
   if (!isOpen) return null;
+
+  const togglePasswordVisibility = (userId: string) => {
+    setVisiblePasswords((prev) => ({
+      ...prev,
+      [userId]: !prev[userId],
+    }));
+  };
 
   const handleAddOrUpdateUser = (e: React.FormEvent) => {
     e.preventDefault();
@@ -131,8 +147,8 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
               <Users className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="font-semibold text-slate-100 text-base">사용자 등록 및 권한 설정</h2>
-              <p className="text-xs text-slate-400">Flow/Info 메뉴 접근 및 정보 관리 권한을 부여합니다.</p>
+              <h2 className="font-semibold text-slate-100 text-base">사용자 등록 및 권한 / 비밀번호 관리</h2>
+              <p className="text-xs text-slate-400">사용자 계정 생성, 비밀번호 열람·수정 및 접근 권한을 관리합니다.</p>
             </div>
           </div>
           <button
@@ -148,8 +164,9 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
           {/* User Registration Form */}
           <form onSubmit={handleAddOrUpdateUser} className="p-4 rounded-xl bg-slate-800/60 border border-slate-700/80 space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-slate-200">
-                {editingUserId ? '사용자 정보 수정' : '새 사용자 등록'}
+              <span className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                <Key className="w-3.5 h-3.5 text-purple-400" />
+                {editingUserId ? '사용자 정보 및 비밀번호 수정' : '새 사용자 등록'}
               </span>
               {editingUserId && (
                 <button
@@ -173,28 +190,38 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                   placeholder="예: 5200, KDH, AJ"
                   value={initials}
                   onChange={(e) => setInitials(e.target.value)}
-                  className="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 text-xs focus:outline-none focus:ring-1 focus:ring-purple-500 uppercase"
+                  className="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 text-xs focus:outline-none focus:ring-1 focus:ring-purple-500 uppercase font-mono"
                 />
               </div>
               <div>
                 <label className="block text-[11px] font-medium text-slate-400 mb-1">이름 (선택)</label>
                 <input
                   type="text"
-                  placeholder="예: 김작업"
+                  placeholder="예: 관리자 / 김작업"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   className="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 text-xs focus:outline-none focus:ring-1 focus:ring-purple-500"
                 />
               </div>
               <div>
-                <label className="block text-[11px] font-medium text-slate-400 mb-1">비밀번호</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[11px] font-medium text-slate-400">비밀번호</label>
+                  <button
+                    type="button"
+                    onClick={() => setShowFormPassword(!showFormPassword)}
+                    className="text-[10px] text-purple-400 hover:text-purple-300 flex items-center gap-0.5"
+                  >
+                    {showFormPassword ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                    <span>{showFormPassword ? '숨김' : '표시'}</span>
+                  </button>
+                </div>
                 <input
-                  type="password"
+                  type={showFormPassword ? 'text' : 'password'}
                   required
                   placeholder="접속 비밀번호"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 text-xs focus:outline-none focus:ring-1 focus:ring-purple-500"
+                  className="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-amber-300 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-purple-500"
                 />
               </div>
             </div>
@@ -266,30 +293,57 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
 
           {/* User List */}
           <div>
-            <h3 className="text-xs font-semibold text-slate-300 mb-2">등록된 사용자 목록 ({localUsers.length}명)</h3>
-            <div className="space-y-1.5">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs font-semibold text-slate-300">
+                등록된 사용자 목록 ({localUsers.length}명)
+              </h3>
+              <span className="text-[11px] text-slate-400">
+                비밀번호 열람 및 즉시 수정 가능
+              </span>
+            </div>
+            <div className="space-y-2">
               {localUsers.map((u) => {
                 const isSpecial = u.initials === '5200' || u.initials === 'MASTER';
+                const isPwVisible = visiblePasswords[u.id] ?? true;
+
                 return (
                   <div
                     key={u.id}
-                    className="flex items-center justify-between p-3 rounded-xl bg-slate-800/80 border border-slate-700/80 text-xs"
+                    className="flex flex-col sm:flex-row sm:items-center justify-between p-3 rounded-xl bg-slate-800/80 border border-slate-700/80 text-xs gap-2.5"
                   >
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-lg bg-purple-500/20 text-purple-300 font-bold flex items-center justify-center font-mono">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-9 h-9 rounded-lg bg-purple-500/20 text-purple-300 font-bold flex items-center justify-center font-mono shrink-0">
                         {u.initials}
                       </div>
-                      <div>
-                        <div className="flex items-center gap-2">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
                           <span className="font-semibold text-slate-200">{u.name || u.initials}</span>
-                          <span className="text-slate-500 font-mono text-[11px]">(ID: {u.initials})</span>
+                          <span className="text-slate-400 font-mono text-[11px]">(ID: {u.initials})</span>
+                          
+                          {/* Visible Password Pill for Master & 5200 */}
+                          <div className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-900 border border-slate-700 text-[11px]">
+                            <Key className="w-3 h-3 text-amber-400 shrink-0" />
+                            <span className="text-slate-400">PW:</span>
+                            <span className="font-mono font-bold text-amber-300 tracking-wider">
+                              {isPwVisible ? u.password : '••••••'}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => togglePasswordVisibility(u.id)}
+                              className="text-slate-400 hover:text-slate-200 ml-1"
+                              title={isPwVisible ? '비밀번호 가리기' : '비밀번호 보기'}
+                            >
+                              {isPwVisible ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                            </button>
+                          </div>
+
                           {isSpecial && (
                             <span className="px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 font-medium text-[10px] border border-purple-500/30">
                               최고관리자
                             </span>
                           )}
                         </div>
-                        <div className="flex flex-wrap gap-1.5 mt-1">
+                        <div className="flex flex-wrap gap-1.5 mt-1.5">
                           <span
                             className={`px-1.5 py-0.5 rounded text-[10px] ${
                               u.canAccessFlow !== false
@@ -321,13 +375,14 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1 self-end sm:self-center shrink-0">
                       <button
                         onClick={() => handleEditClick(u)}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-700 transition-colors"
+                        className="px-2.5 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-semibold flex items-center gap-1 transition-colors"
                         title="수정"
                       >
-                        <Edit3 className="w-3.5 h-3.5" />
+                        <Edit3 className="w-3.5 h-3.5 text-purple-400" />
+                        <span>수정</span>
                       </button>
                       {!isSpecial && (
                         <button

@@ -1,9 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
-import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, RotateCw, Loader2, AlertCircle, Maximize2 } from 'lucide-react';
+import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
+import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, RotateCw, Loader2, AlertCircle } from 'lucide-react';
 
-// Configure PDF.js worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs`;
+// Configure PDF.js worker with bundled vite URL and robust cdn fallbacks
+try {
+  if (typeof window !== 'undefined') {
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      pdfjsWorker ||
+      `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version || '4.10.38'}/pdf.worker.min.mjs`;
+  }
+} catch {
+  // Ignore fallback error
+}
 
 interface PdfViewerProps {
   fileUrl: string;
@@ -31,13 +40,35 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ fileUrl, fileName }) => {
 
     const loadDoc = async () => {
       try {
-        const loadingTask = pdfjsLib.getDocument({
-          url: fileUrl,
-          cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/cmaps/',
-          cMapPacked: true,
-        });
+        let docSource: any = fileUrl;
 
+        // Base64 data URL
+        if (fileUrl.startsWith('data:application/pdf;base64,')) {
+          const base64Data = fileUrl.replace('data:application/pdf;base64,', '');
+          const binaryString = atob(base64Data);
+          const len = binaryString.length;
+          const bytes = new Uint8Array(len);
+          for (let i = 0; i < len; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          docSource = { data: bytes };
+        } else if (fileUrl.startsWith('http')) {
+          // Fetch as arrayBuffer to bypass CORS restrictions
+          try {
+            const resp = await fetch(fileUrl);
+            if (resp.ok) {
+              const arrayBuf = await resp.arrayBuffer();
+              docSource = { data: new Uint8Array(arrayBuf) };
+            }
+          } catch (fetchErr) {
+            console.warn('Direct fetch failed, falling back to URL parameter:', fetchErr);
+            docSource = { url: fileUrl, withCredentials: false };
+          }
+        }
+
+        const loadingTask = pdfjsLib.getDocument(docSource);
         const doc = await loadingTask.promise;
+
         if (isCancelled) return;
         setPdfDoc(doc);
         setNumPages(doc.numPages);
@@ -45,7 +76,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ fileUrl, fileName }) => {
       } catch (err: any) {
         console.error('PDF load error:', err);
         if (!isCancelled) {
-          setError('PDF 문서를 불러오는 중 오류가 발생했습니다. 원본 열기 또는 다운로드를 이용해 주세요.');
+          setError('PDF 문서를 불러오는 중 오류가 발생했습니다.');
           setLoading(false);
         }
       }
@@ -67,7 +98,9 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ fileUrl, fileName }) => {
     const renderPage = async () => {
       try {
         if (renderTaskRef.current) {
-          renderTaskRef.current.cancel();
+          try {
+            renderTaskRef.current.cancel();
+          } catch {}
         }
 
         const page = await pdfDoc.getPage(currentPage);
@@ -87,7 +120,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ fileUrl, fileName }) => {
 
         const transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : undefined;
 
-        const renderContext = {
+        const renderContext: any = {
           canvasContext: context,
           viewport,
           transform,
@@ -108,7 +141,9 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ fileUrl, fileName }) => {
     return () => {
       isCancelled = true;
       if (renderTaskRef.current) {
-        renderTaskRef.current.cancel();
+        try {
+          renderTaskRef.current.cancel();
+        } catch {}
       }
     };
   }, [pdfDoc, currentPage, zoom, rotation]);
@@ -130,17 +165,27 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ fileUrl, fileName }) => {
 
   if (error) {
     return (
-      <div className="w-full h-full flex flex-col items-center justify-center p-6 text-slate-300">
-        <AlertCircle className="w-10 h-10 text-amber-400 mb-3" />
-        <p className="text-sm text-center mb-4">{error}</p>
-        <a
-          href={fileUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold transition-all shadow-md"
-        >
-          새 창으로 원본 열기
-        </a>
+      <div className="w-full h-full flex flex-col items-center justify-center p-4 text-slate-300">
+        <div className="w-full h-full flex flex-col bg-slate-900 rounded-xl overflow-hidden">
+          <div className="p-3 bg-slate-800 flex items-center justify-between text-xs border-b border-slate-700">
+            <span className="text-amber-400 flex items-center gap-1">
+              <AlertCircle className="w-4 h-4" /> 내장 뷰어로 표시합니다
+            </span>
+            <a
+              href={fileUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-3 py-1 bg-sky-600 hover:bg-sky-500 text-white rounded font-medium"
+            >
+              새 창으로 열기
+            </a>
+          </div>
+          <iframe
+            src={`${fileUrl}#toolbar=1&navpanes=0`}
+            className="w-full flex-1 border-0"
+            title={fileName}
+          />
+        </div>
       </div>
     );
   }

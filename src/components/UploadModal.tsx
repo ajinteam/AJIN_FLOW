@@ -282,9 +282,9 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                         {sf.fileType === 'image' && <ImageIcon className="w-4 h-4 text-sky-400" />}
                         {sf.fileType === 'other' && <FileText className="w-4 h-4 text-slate-400" />}
                       </div>
-                      <div className="min-w-0">
-                        <p className="font-medium text-slate-200 truncate">{sf.file.name}</p>
-                        <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium text-slate-200 break-all leading-snug">{sf.file.name}</p>
+                        <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400 mt-0.5">
                           <span className="font-mono">{formatFileSize(sf.compressedSize)}</span>
                           <span>•</span>
                           <span className="text-slate-400">폴더: {sf.folder}</span>

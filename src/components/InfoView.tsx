@@ -165,6 +165,20 @@ export const InfoView: React.FC<InfoViewProps> = ({
     }
   };
 
+  // Helper to calculate D-Day diff number
+  const getDDayDiff = (dateStr: string) => {
+    if (!dateStr) return 999999;
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const target = parseISO(dateStr);
+      target.setHours(0, 0, 0, 0);
+      return differenceInDays(target, today);
+    } catch {
+      return 999999;
+    }
+  };
+
   // Helper to calculate D-Day
   const getDDayBadge = (dateStr: string) => {
     if (!dateStr) return null;
@@ -187,7 +201,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
     }
   };
 
-  // Filtered projects list
+  // Filtered and D-Day sorted projects list (Requirement #3: 프로젝트의 순서를 d-day 순서로 정렬되게)
   const filteredProjects = useMemo(() => {
     let list = projects.filter((p) => {
       if (activeTab === 'trash') return p.status === 'trash';
@@ -212,6 +226,13 @@ export const InfoView: React.FC<InfoViewProps> = ({
       });
     }
 
+    // Sort by D-Day: closest upcoming deadline first (e.g. D-0, D-1, D-5, ..., past D+1, D+2, no date last)
+    list.sort((a, b) => {
+      const diffA = getDDayDiff(a.shipmentDate);
+      const diffB = getDDayDiff(b.shipmentDate);
+      return diffA - diffB;
+    });
+
     return list;
   }, [projects, files, activeTab, searchQuery]);
 
@@ -231,15 +252,26 @@ export const InfoView: React.FC<InfoViewProps> = ({
     return map;
   }, [files]);
 
-  // Handle Project Creation or Update
+  // Handle Project Creation or Update (Requirement #4: 선적일을 수정하면 이전 선적일도 표시되고, 수정된 것은 빨강색으로 표시)
   const handleSaveProject = (projectData: Omit<InfoProject, 'id' | 'createdAt' | 'updatedAt' | 'status'>) => {
     const now = new Date().toISOString();
     if (editingProject) {
+      const oldShipmentDate = editingProject.shipmentDate;
+      const newShipmentDate = projectData.shipmentDate;
+      let previousHistory = editingProject.previousShipmentDates || [];
+
+      if (oldShipmentDate && newShipmentDate && oldShipmentDate !== newShipmentDate) {
+        if (!previousHistory.includes(oldShipmentDate)) {
+          previousHistory = [...previousHistory, oldShipmentDate];
+        }
+      }
+
       const updated = projects.map((p) =>
         p.id === editingProject.id
           ? {
               ...p,
               ...projectData,
+              previousShipmentDates: previousHistory,
               updatedAt: now,
             }
           : p
@@ -677,9 +709,9 @@ export const InfoView: React.FC<InfoViewProps> = ({
                     <div className="p-1.5 rounded-lg bg-slate-800 text-slate-400">
                       <FileText className="w-4 h-4" />
                     </div>
-                    <div className="min-w-0">
-                      <p className="font-medium text-slate-200 truncate">{f.fileName}</p>
-                      <p className="text-[11px] text-slate-500">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium text-slate-200 break-all leading-snug">{f.fileName}</p>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
                         {formatFileSize(f.fileSize)} • 삭제일:{' '}
                         {f.deletedAt ? format(parseISO(f.deletedAt), 'yyyy-MM-dd HH:mm') : '-'}
                       </p>
@@ -780,24 +812,46 @@ export const InfoView: React.FC<InfoViewProps> = ({
                             )}
                           </div>
 
-                          {/* Details line: 선적날짜, 생산수량, 비고 */}
-                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-400 mt-2">
+                          {/* Details line: 선적날짜, 생산수량, 비고 (Requirement #4: 선적일을 수정하면 이전 선적일도 표시되고, 수정된 것은 빨강색으로 표시) */}
+                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-slate-400 mt-2">
                             {project.shipmentDate && (
-                              <div className="flex items-center gap-1">
-                                <Calendar className="w-3.5 h-3.5 text-slate-500" />
-                                <span>선적일: <strong className="text-slate-200">{project.shipmentDate}</strong></span>
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <Calendar className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                <span>선적일:</span>
+                                {project.previousShipmentDates && project.previousShipmentDates.length > 0 && (
+                                  <div className="flex items-center gap-1">
+                                    {project.previousShipmentDates.map((prevD, pIdx) => (
+                                      <span
+                                        key={pIdx}
+                                        className="text-slate-500 line-through font-mono text-[11px]"
+                                      >
+                                        {prevD}
+                                      </span>
+                                    ))}
+                                    <span className="text-slate-600">→</span>
+                                  </div>
+                                )}
+                                <strong
+                                  className={`font-mono ${
+                                    project.previousShipmentDates && project.previousShipmentDates.length > 0
+                                      ? 'text-rose-400 font-bold bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20'
+                                      : 'text-slate-200'
+                                  }`}
+                                >
+                                  {project.shipmentDate}
+                                </strong>
                               </div>
                             )}
 
                             {project.productionQty && (
                               <div className="flex items-center gap-1">
-                                <Hash className="w-3.5 h-3.5 text-slate-500" />
+                                <Hash className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                                 <span>생산수량: <strong className="text-emerald-400">{project.productionQty}</strong></span>
                               </div>
                             )}
 
                             {project.notes && (
-                              <div className="flex items-center gap-1 text-slate-400 truncate max-w-xs">
+                              <div className="flex items-center gap-1 text-slate-400">
                                 <span>비고: {project.notes}</span>
                               </div>
                             )}
@@ -961,11 +1015,14 @@ export const InfoView: React.FC<InfoViewProps> = ({
                                     )}
                                   </div>
 
-                                  <div className="min-w-0">
-                                    <p className="font-semibold text-xs sm:text-sm text-slate-200 group-hover:text-sky-300 transition-colors truncate">
+                                  <div className="min-w-0 flex-1">
+                                    <p
+                                      className="font-semibold text-xs sm:text-sm text-slate-200 group-hover:text-sky-300 transition-colors break-all leading-snug"
+                                      title={file.fileName}
+                                    >
                                       {file.fileName}
                                     </p>
-                                    <div className="flex items-center gap-1.5 text-[11px] text-slate-400 mt-0.5">
+                                    <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400 mt-1">
                                       <span className="font-mono">{formatFileSize(file.fileSize)}</span>
                                       <span>•</span>
                                       <span>{file.uploadedBy}</span>
