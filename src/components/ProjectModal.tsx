@@ -63,7 +63,7 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
       return;
     }
     if (!machineType.trim()) {
-      setError('기종(설비/라인)을 입력해 주세요.');
+      setError('기종을 입력해 주세요.');
       return;
     }
 
@@ -113,14 +113,14 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center gap-1.5">
               <Tag className="w-3.5 h-3.5 text-sky-400" />
-              모델명 (Model) <span className="text-rose-400">*</span>
+              모델명 (Model_1) <span className="text-rose-400">*</span>
             </label>
             <input
               type="text"
               required
               value={model}
               onChange={(e) => setModel(e.target.value)}
-              placeholder="예: AJ-6200, AL-PRO, S24-COVER"
+              placeholder="예: EF62"
               className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 placeholder-slate-500"
             />
           </div>
@@ -129,14 +129,14 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center gap-1.5">
               <Cpu className="w-3.5 h-3.5 text-indigo-400" />
-              기종 / 라인 (Machine Type) <span className="text-rose-400">*</span>
+              기종 (Model_2) <span className="text-rose-400">*</span>
             </label>
             <input
               type="text"
               required
               value={machineType}
               onChange={(e) => setMachineType(e.target.value)}
-              placeholder="예: 사출 1호기, CNC-5200, 금형 B타입, 조립라인"
+              placeholder="예: CPH-332"
               className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 placeholder-slate-500"
             />
           </div>
@@ -201,7 +201,7 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
               rows={2}
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="작업자 참고사항, 특수 도면 버전, 납기 유의사항 등"
+              placeholder="참고사항, 유의사항 등"
               className="w-full px-3.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 placeholder-slate-500 resize-none"
             />
           </div>

@@ -147,8 +147,8 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               <Upload className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="font-semibold text-slate-100 text-base">파일 업로드 (도면 / 사양 / 사진)</h2>
-              <p className="text-xs text-slate-400">PDF 도면, 엑셀 사양서, 최적화 현장 사진을 등록합니다.</p>
+              <h2 className="font-semibold text-slate-100 text-base">파일 업로드</h2>
+              <p className="text-xs text-slate-400">PDF, 엑셀, 사진을 등록합니다.</p>
             </div>
           </div>
           <button
@@ -244,7 +244,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                   클릭하여 파일 선택 또는 여기로 드래그
                 </p>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  PDF 도면 (.pdf) • 엑셀 사양서 (.xlsx, .xls) • 현장 사진 (.jpg, .png)
+                  (.pdf) • (.xlsx, .xls) • (.jpg, .png)
                 </p>
               </div>
               <div className="flex items-center gap-2 mt-1">

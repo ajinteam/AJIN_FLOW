@@ -159,10 +159,10 @@ const Auth = ({
             <span className="text-xl font-black text-white">AJ</span>
           </div>
           <h1 className="text-xl font-bold text-slate-100 text-center">
-            아진정밀 통합 정보 시스템
+            아진정공 통합 정보 시스템
           </h1>
           <p className="text-slate-400 text-xs mt-1">
-            도면·사양서 열람(INFO) & 공정관리(FLOW)
+            도면· GOD 열람(INFO) & 공정관리(FLOW)
           </p>
         </div>
 

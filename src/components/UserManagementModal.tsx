@@ -187,7 +187,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                 <input
                   type="text"
                   required
-                  placeholder="예: 5200, KDH, AJ"
+                  placeholder="예: J-SUNG"
                   value={initials}
                   onChange={(e) => setInitials(e.target.value)}
                   className="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 text-xs focus:outline-none focus:ring-1 focus:ring-purple-500 uppercase font-mono"
@@ -197,7 +197,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                 <label className="block text-[11px] font-medium text-slate-400 mb-1">이름 (선택)</label>
                 <input
                   type="text"
-                  placeholder="예: 관리자 / 김작업"
+                  placeholder="예: 팀장 / 홍길동"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   className="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-slate-100 text-xs focus:outline-none focus:ring-1 focus:ring-purple-500"
