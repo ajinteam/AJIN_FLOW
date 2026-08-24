@@ -1,5 +1,5 @@
 import { InfoDataState, InfoFile, InfoFolderType, InfoProject } from '../types';
-import { compressImage } from './imageCompressor';
+import { compressImage, formatFileSize } from './imageCompressor';
 import * as XLSX from 'xlsx';
 
 const LOCAL_STORAGE_INFO_KEY = 'ajin_info_data_local_v2';
