@@ -458,9 +458,12 @@ export const InfoView: React.FC<InfoViewProps> = ({
   // Upload multiple files & handle automatic overwriting
   const handleUploadFiles = async (projectId: string, uploadedFilesList: File[]) => {
     let currentFilesState = [...files];
+    const now = new Date().toISOString();
 
     for (const rawFile of uploadedFilesList) {
       const { infoFile } = await uploadSingleFile(rawFile, projectId, currentUserInitials);
+      infoFile.uploadedAt = now;
+      infoFile.updatedAt = now;
 
       // Check if file with same name already exists in this project -> AUTO OVERWRITE
       const existingIdx = currentFilesState.findIndex(
@@ -472,8 +475,9 @@ export const InfoView: React.FC<InfoViewProps> = ({
         infoFile.version = (oldFile.version || 1) + 1;
         infoFile.id = oldFile.id; // Maintain ID
         currentFilesState[existingIdx] = infoFile;
-        console.log(`[Auto-Overwrite] File "${rawFile.name}" updated to v${infoFile.version}`);
+        console.log(`[Auto-Overwrite] File "${rawFile.name}" overwritten & updated to v${infoFile.version} at ${now}`);
       } else {
+        infoFile.version = 1;
         currentFilesState = [infoFile, ...currentFilesState];
       }
     }
@@ -1026,9 +1030,26 @@ export const InfoView: React.FC<InfoViewProps> = ({
                                       <span className="font-mono">{formatFileSize(file.fileSize)}</span>
                                       <span>•</span>
                                       <span>{file.uploadedBy}</span>
+                                      <span>•</span>
+                                      <span className="font-mono text-slate-400">
+                                        {file.uploadedAt
+                                          ? format(parseISO(file.uploadedAt), 'MM.dd HH:mm')
+                                          : file.updatedAt
+                                          ? format(parseISO(file.updatedAt), 'MM.dd HH:mm')
+                                          : '-'}
+                                      </span>
+
+                                      {/* NEW Badge: uploaded within last 48 hours */}
+                                      {file.uploadedAt &&
+                                        new Date().getTime() - new Date(file.uploadedAt).getTime() < 48 * 60 * 60 * 1000 && (
+                                          <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold text-[10px] border border-emerald-500/30">
+                                            NEW
+                                          </span>
+                                        )}
+
                                       {file.version && file.version > 1 && (
-                                        <span className="px-1 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-mono text-[10px]">
-                                          v{file.version}
+                                        <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold text-[10px] border border-amber-500/30">
+                                          v{file.version} 수정
                                         </span>
                                       )}
                                     </div>
@@ -1076,7 +1097,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
       )}
 
       {/* MODALS */}
-      <FileViewerModal file={viewingFile} onClose={() => setViewingFile(null)} />
+      <FileViewerModal file={viewingFile} canDownload={canManage} onClose={() => setViewingFile(null)} />
 
       <ProjectModal
         isOpen={isProjectModalOpen}

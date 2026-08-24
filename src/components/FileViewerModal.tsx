@@ -18,10 +18,15 @@ import { ExcelViewer } from './ExcelViewer';
 
 interface FileViewerModalProps {
   file: InfoFile | null;
+  canDownload?: boolean;
   onClose: () => void;
 }
 
-export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose }) => {
+export const FileViewerModal: React.FC<FileViewerModalProps> = ({
+  file,
+  canDownload = true,
+  onClose,
+}) => {
   const [imgZoom, setImgZoom] = useState<number>(100);
   const [imgRotation, setImgRotation] = useState<number>(0);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(true);
@@ -50,6 +55,7 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose 
   if (!file) return null;
 
   const handleDownload = () => {
+    if (!canDownload) return;
     const link = document.createElement('a');
     link.href = file.fileUrl;
     link.download = file.fileName;
@@ -91,13 +97,10 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose 
                 <span>{formatFileSize(file.fileSize)}</span>
                 <span>•</span>
                 <span>업로더: {file.uploadedBy}</span>
-                {file.originalSize && file.originalSize > file.fileSize && (
-                  <>
-                    <span className="hidden xs:inline">•</span>
-                    <span className="text-emerald-400 font-medium hidden xs:inline">
-                      최적화 완료 (-{Math.round(((file.originalSize - file.fileSize) / file.originalSize) * 100)}%)
-                    </span>
-                  </>
+                {file.version && file.version > 1 && (
+                  <span className="px-1.5 py-0.2 rounded bg-sky-500/20 text-sky-300 font-mono text-[10px]">
+                    v{file.version}
+                  </span>
                 )}
               </div>
             </div>
@@ -135,14 +138,17 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose 
               </>
             )}
 
-            <button
-              onClick={handleDownload}
-              className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs sm:text-sm font-semibold transition-colors shadow-sm"
-              title="다운로드"
-            >
-              <Download className="w-4 h-4" />
-              <span className="hidden sm:inline">다운로드</span>
-            </button>
+            {/* Requirement #4: 읽기 전용 사용자는 다운로드 버튼 숨김 */}
+            {canDownload && (
+              <button
+                onClick={handleDownload}
+                className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs sm:text-sm font-semibold transition-colors shadow-sm"
+                title="다운로드"
+              >
+                <Download className="w-4 h-4" />
+                <span className="hidden sm:inline">다운로드</span>
+              </button>
+            )}
 
             <button
               onClick={() => setIsFullscreen(!isFullscreen)}
@@ -164,12 +170,12 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose 
 
         {/* Content body */}
         <div className="flex-1 overflow-auto bg-slate-950 flex flex-col relative">
-          {/* 1. PDF High-Resolution Canvas Viewer */}
+          {/* 1. PDF Continuous Scroll Viewer */}
           {file.fileType === 'pdf' && (
             <PdfViewer fileUrl={file.fileUrl} fileName={file.fileName} />
           )}
 
-          {/* 2. Image High-Resolution Viewer with Pan & Zoom */}
+          {/* 2. Image Viewer */}
           {file.fileType === 'image' && (
             <div className="w-full h-full flex items-center justify-center overflow-auto p-4 select-none touch-pan-x touch-pan-y">
               <div
@@ -188,7 +194,7 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose 
             </div>
           )}
 
-          {/* 3. Excel High-Resolution Document (A4/PDF Style) Viewer */}
+          {/* 3. Excel High-Resolution Drawing Sheet Viewer */}
           {file.fileType === 'excel' && (
             <ExcelViewer fileUrl={file.fileUrl} fileName={file.fileName} />
           )}
@@ -200,15 +206,17 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose 
               <div className="max-w-md">
                 <h3 className="text-base font-medium text-slate-200 mb-1">{file.fileName}</h3>
                 <p className="text-xs text-slate-400 mb-4">
-                  미리보기를 지원하지 않는 파일 형식입니다. 다운로드하여 확인해 주세요.
+                  미리보기를 지원하지 않는 파일 형식입니다.
                 </p>
-                <button
-                  onClick={handleDownload}
-                  className="px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-sm font-medium transition-colors inline-flex items-center gap-2 shadow-md"
-                >
-                  <Download className="w-4 h-4" />
-                  파일 다운로드
-                </button>
+                {canDownload && (
+                  <button
+                    onClick={handleDownload}
+                    className="px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-sm font-medium transition-colors inline-flex items-center gap-2 shadow-md"
+                  >
+                    <Download className="w-4 h-4" />
+                    파일 다운로드
+                  </button>
+                )}
               </div>
             </div>
           )}
