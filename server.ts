@@ -405,19 +405,6 @@ async function startServer() {
         return fs.createReadStream(localFilePath).pipe(res);
       }
 
-      // Check if any local file matches partially (e.g. without timestamp prefix)
-      const folderPath = path.join(UPLOADS_BASE, folder);
-      if (fs.existsSync(folderPath)) {
-        const localFiles = fs.readdirSync(folderPath);
-        const match = localFiles.find((f) => f === decodedFileName || f.endsWith(`_${decodedFileName}`) || decodedFileName.endsWith(`_${f}`));
-        if (match) {
-          const matchedPath = path.join(folderPath, match);
-          res.setHeader("Content-Type", contentType);
-          res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(match)}"`);
-          return fs.createReadStream(matchedPath).pipe(res);
-        }
-      }
-
       // Otherwise try fetching from R2
       const r2Object = await getFromR2(folder, decodedFileName);
       if (r2Object && r2Object.Body) {
@@ -427,45 +414,7 @@ async function startServer() {
         return stream.pipe(res);
       }
 
-      // If exact key failed in R2, attempt to find file by suffix or clean name in R2
-      try {
-        const { getR2S3Client } = await import("./src/lib/r2Presign.js").catch(async () => {
-          return await import("./src/lib/r2Presign");
-        });
-        const r2 = getR2S3Client();
-        if (r2) {
-          const { ListObjectsV2Command } = await import("@aws-sdk/client-s3");
-          const listRes = await r2.client.send(
-            new ListObjectsV2Command({
-              Bucket: r2.bucket,
-              Prefix: `${folder}/`,
-              MaxKeys: 100,
-            })
-          );
-          if (listRes.Contents) {
-            const rawTarget = decodedFileName.replace(/^\d+_/, "");
-            const matchedContent = listRes.Contents.find((c) => {
-              if (!c.Key) return false;
-              const keyFile = c.Key.substring(folder.length + 1);
-              return keyFile === decodedFileName || keyFile.includes(rawTarget) || decodedFileName.includes(keyFile);
-            });
-            if (matchedContent && matchedContent.Key) {
-              const matchedKeyFile = matchedContent.Key.substring(folder.length + 1);
-              const fallbackObj = await getFromR2(folder, matchedKeyFile);
-              if (fallbackObj && fallbackObj.Body) {
-                res.setHeader("Content-Type", fallbackObj.ContentType || contentType);
-                res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(matchedKeyFile)}"`);
-                const stream = fallbackObj.Body as any;
-                return stream.pipe(res);
-              }
-            }
-          }
-        }
-      } catch (fallbackErr) {
-        console.warn("R2 fallback search error:", fallbackErr);
-      }
-
-      return res.status(404).json({ error: "File not found: " + decodedFileName });
+      return res.status(404).json({ error: "File not found" });
     } catch (error: any) {
       console.error("File serve error:", error);
       res.status(500).json({ error: "Failed to fetch file" });
