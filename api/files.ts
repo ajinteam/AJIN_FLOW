@@ -24,6 +24,16 @@ function getR2Endpoint(): string | null {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // Set universal CORS and embedding headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', '*');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
   const folder = (req.query.folder as string) || '';
   const fileName = (req.query.file as string) || (req.query.fileName as string) || '';
 
@@ -70,9 +80,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         Key: key,
       }));
 
-      if (response.ContentType) {
-        res.setHeader('Content-Type', response.ContentType);
-      }
+      // Determine content type
+      let contentType = response.ContentType || 'application/octet-stream';
+      const lowerName = fileName.toLowerCase();
+      if (lowerName.endsWith('.pdf')) contentType = 'application/pdf';
+      else if (lowerName.endsWith('.xlsx')) contentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      else if (lowerName.endsWith('.xls')) contentType = 'application/vnd.ms-excel';
+      else if (lowerName.endsWith('.csv')) contentType = 'text/csv; charset=utf-8';
+      else if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')) contentType = 'image/jpeg';
+      else if (lowerName.endsWith('.png')) contentType = 'image/png';
+
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(fileName)}"`);
+
       if (response.ContentLength) {
         res.setHeader('Content-Length', response.ContentLength);
       }
