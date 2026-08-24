@@ -434,3 +434,85 @@ export async function uploadSingleFile(
 
   return { infoFile: newFileRecord, savedPercent };
 }
+
+/**
+ * Upload multiple images bundled together as a single Webtoon-style continuous scroll album
+ */
+export async function uploadImageAlbum(
+  files: File[],
+  albumTitle: string,
+  projectId: string,
+  uploadedBy: string,
+  onProgress?: (percent: number) => void
+): Promise<InfoFile> {
+  const imageList: Array<{ name: string; url: string; size: number }> = [];
+  let totalOriginalSize = 0;
+  let totalCompressedSize = 0;
+  let firstThumbnail = '';
+
+  for (let i = 0; i < files.length; i++) {
+    const rawFile = files[i];
+    totalOriginalSize += rawFile.size;
+
+    const { infoFile } = await uploadSingleFile(rawFile, projectId, uploadedBy, (p) => {
+      if (onProgress) {
+        const overall = Math.round(((i + p / 100) / files.length) * 100);
+        onProgress(overall);
+      }
+    });
+
+    totalCompressedSize += infoFile.fileSize;
+    if (!firstThumbnail && infoFile.previewData?.thumbnailUrl) {
+      firstThumbnail = infoFile.previewData.thumbnailUrl;
+    } else if (!firstThumbnail) {
+      firstThumbnail = infoFile.fileUrl;
+    }
+
+    imageList.push({
+      name: rawFile.name,
+      url: infoFile.fileUrl,
+      size: infoFile.fileSize,
+    });
+  }
+
+  const now = new Date().toISOString();
+  const cleanTitle = albumTitle.trim() || `현장 사진 묶음 (${files.length}장)`;
+  const finalFileName = cleanTitle.endsWith('.album') || cleanTitle.includes('(웹툰)')
+    ? cleanTitle
+    : `${cleanTitle} (웹툰/연속사진 ${files.length}P)`;
+
+  const albumRecord: InfoFile = {
+    id: `album_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+    projectId,
+    fileName: finalFileName,
+    fileType: 'image',
+    folder: 'info-image',
+    storagePath: `info-image/album_${Date.now()}`,
+    fileUrl: imageList[0]?.url || '',
+    fileSize: totalCompressedSize,
+    mimeType: 'application/x-image-album',
+    uploadedBy,
+    uploadedAt: now,
+    updatedAt: now,
+    status: 'active',
+    version: 1,
+    isImageAlbum: true,
+    imageList,
+    uploadHistory: [
+      {
+        version: 1,
+        uploadedAt: now,
+        uploadedBy,
+        fileSize: totalCompressedSize,
+      },
+    ],
+    originalSize: totalOriginalSize,
+    compressedSize: totalCompressedSize,
+    previewData: {
+      thumbnailUrl: firstThumbnail,
+    },
+  };
+
+  return albumRecord;
+}
+

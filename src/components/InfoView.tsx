@@ -33,7 +33,7 @@ import { formatFileSize } from '../lib/imageCompressor';
 import { FileViewerModal } from './FileViewerModal';
 import { ProjectModal } from './ProjectModal';
 import { UploadModal } from './UploadModal';
-import { uploadSingleFile, deleteFileFromServer, syncFilesFromR2 } from '../lib/api';
+import { uploadSingleFile, uploadImageAlbum, deleteFileFromServer, syncFilesFromR2, detectFileTypeAndFolder } from '../lib/api';
 
 interface InfoViewProps {
   projects: InfoProject[];
@@ -487,11 +487,39 @@ export const InfoView: React.FC<InfoViewProps> = ({
   };
 
   // Upload multiple files & handle automatic overwriting and version incrementing (V1, V2, ...)
-  const handleUploadFiles = async (projectId: string, uploadedFilesList: File[]) => {
+  const handleUploadFiles = async (
+    projectId: string,
+    uploadedFilesList: File[],
+    isBundleAlbum?: boolean,
+    albumTitle?: string
+  ) => {
     let currentFilesState = [...files];
     const now = new Date().toISOString();
 
-    for (const rawFile of uploadedFilesList) {
+    // If user selected multiple images AND chose to bundle them into a single continuous Webtoon Album
+    const imageFiles = uploadedFilesList.filter((f) => detectFileTypeAndFolder(f).fileType === 'image');
+    const nonImageFiles = uploadedFilesList.filter((f) => detectFileTypeAndFolder(f).fileType !== 'image');
+
+    if (isBundleAlbum && imageFiles.length > 1) {
+      try {
+        const albumFile = await uploadImageAlbum(
+          imageFiles,
+          albumTitle || '',
+          projectId,
+          currentUserInitials
+        );
+        currentFilesState = [albumFile, ...currentFilesState];
+      } catch (albumErr) {
+        console.error('Failed to create image album, falling back to individual uploads:', albumErr);
+        // Fallback: add imageFiles back to individual processing
+        nonImageFiles.push(...imageFiles);
+      }
+    } else {
+      // Treat images as regular individual files
+      nonImageFiles.push(...imageFiles);
+    }
+
+    for (const rawFile of nonImageFiles) {
       const { infoFile } = await uploadSingleFile(rawFile, projectId, currentUserInitials);
 
       // Check if file with same name already exists in this project -> AUTO OVERWRITE
@@ -1095,12 +1123,14 @@ export const InfoView: React.FC<InfoViewProps> = ({
                                     <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400 mt-1">
                                       <span
                                         className={`px-1.5 py-0.2 rounded font-bold font-mono text-[10px] shrink-0 ${
-                                          file.version && file.version > 1
+                                          file.isImageAlbum
+                                            ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                                            : file.version && file.version > 1
                                             ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                                             : 'bg-sky-500/20 text-sky-300 border border-sky-500/30'
                                         }`}
                                       >
-                                        V{file.version || 1}
+                                        {file.isImageAlbum ? `웹툰앨범 (${file.imageList?.length || 'N'}P)` : `V${file.version || 1}`}
                                       </span>
                                       <span className="font-mono">{formatFileSize(file.fileSize)}</span>
                                       <span>•</span>
@@ -1121,7 +1151,9 @@ export const InfoView: React.FC<InfoViewProps> = ({
                                           : '-'}
                                       </span>
                                       <span>•</span>
-                                      <span>{file.uploadedBy}</span>
+                                      <span className="font-semibold text-slate-300 bg-slate-800/90 px-1.5 py-0.2 rounded border border-slate-700/60" title={`등록자 이니셜: ${file.uploadedBy}`}>
+                                        {file.uploadedBy}
+                                      </span>
                                     </div>
                                   </div>
                                 </div>

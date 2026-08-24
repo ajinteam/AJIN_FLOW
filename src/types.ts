@@ -65,6 +65,12 @@ export interface InfoFile {
   description?: string;
   originalSize?: number;  // 압축 전 원본 크기 (이미지 최적화 표시용)
   compressedSize?: number;// 압축 후 크기
+  isImageAlbum?: boolean; // 웹툰 스타일 여러 장 연속 세로 스크롤 앨범
+  imageList?: Array<{
+    name: string;
+    url: string;
+    size: number;
+  }>;
   previewData?: {
     excelSheets?: string[];
     thumbnailUrl?: string;

@@ -147,12 +147,14 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose,
                 </h2>
                 <span
                   className={`px-1.5 py-0.5 rounded font-bold font-mono text-[10px] shrink-0 ${
-                    file.version && file.version > 1
+                    file.isImageAlbum
+                      ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                      : file.version && file.version > 1
                       ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                       : 'bg-sky-500/20 text-sky-300 border border-sky-500/30'
                   }`}
                 >
-                  V{file.version || 1}
+                  {file.isImageAlbum ? `웹툰앨범 (${file.imageList?.length || 'N'}P)` : `V${file.version || 1}`}
                 </span>
               </div>
               <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400 whitespace-nowrap mt-0.5">
@@ -167,7 +169,7 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose,
                     : '-'}
                 </span>
                 <span>•</span>
-                <span>업로더: {file.uploadedBy}</span>
+                <span>등록자: <strong className="text-slate-200">{file.uploadedBy}</strong></span>
                 {file.originalSize && file.originalSize > file.fileSize && (
                   <>
                     <span>•</span>
@@ -247,23 +249,68 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose,
             <PdfViewer fileUrl={file.fileUrl} fileName={file.fileName} />
           )}
 
-          {/* 2. Image Viewer */}
+          {/* 2. Image Viewer / Webtoon Album Viewer */}
           {file.fileType === 'image' && (
-            <div className="w-full h-full flex items-center justify-center overflow-auto p-4 select-none touch-pan-x touch-pan-y">
-              <div
-                style={{
-                  transform: `scale(${zoom / 100}) rotate(${rotation}deg)`,
-                  transition: 'transform 0.15s ease-out',
-                }}
-                className="flex items-center justify-center max-w-full max-h-full"
-              >
-                <img
-                  src={file.fileUrl}
-                  alt={file.fileName}
-                  className="max-w-full max-h-[80vh] object-contain rounded shadow-2xl border border-slate-800"
-                />
+            file.isImageAlbum && file.imageList && file.imageList.length > 0 ? (
+              /* Continuous Vertical Webtoon Scroll Mode */
+              <div className="w-full h-full overflow-y-auto overflow-x-hidden p-2 sm:p-6 select-none touch-pan-y flex flex-col items-center bg-slate-950">
+                <div
+                  style={{
+                    transform: `scale(${zoom / 100})`,
+                    transformOrigin: 'top center',
+                    transition: 'transform 0.15s ease-out',
+                  }}
+                  className="w-full max-w-3xl flex flex-col items-center gap-4 my-2"
+                >
+                  <div className="w-full flex items-center justify-between px-2 py-1.5 rounded-lg bg-slate-900/90 border border-slate-800 text-xs text-slate-400">
+                    <span className="font-semibold text-sky-400 flex items-center gap-1.5">
+                      <ImageIcon className="w-4 h-4" />
+                      연속 사진 앨범 (웹툰 모드) • 총 {file.imageList.length}장
+                    </span>
+                    <span>위아래로 스크롤하여 연속 열람</span>
+                  </div>
+
+                  {file.imageList.map((imgItem, imgIdx) => (
+                    <div
+                      key={imgIdx}
+                      className="w-full flex flex-col items-center bg-slate-900/40 rounded-xl overflow-hidden border border-slate-800/80 shadow-2xl"
+                    >
+                      <div className="w-full px-3 py-1.5 bg-slate-800/80 border-b border-slate-700/60 flex items-center justify-between text-[11px] text-slate-300">
+                        <span className="font-mono font-bold text-sky-400">
+                          #{imgIdx + 1} / {file.imageList!.length}
+                        </span>
+                        <span className="truncate max-w-[200px] text-slate-400 font-mono">
+                          {imgItem.name}
+                        </span>
+                      </div>
+                      <img
+                        src={imgItem.url}
+                        alt={imgItem.name || `사진 ${imgIdx + 1}`}
+                        loading="lazy"
+                        className="w-full h-auto object-contain block"
+                      />
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
+            ) : (
+              /* Single Image Standard Mode */
+              <div className="w-full h-full flex items-center justify-center overflow-auto p-4 select-none touch-pan-x touch-pan-y">
+                <div
+                  style={{
+                    transform: `scale(${zoom / 100}) rotate(${rotation}deg)`,
+                    transition: 'transform 0.15s ease-out',
+                  }}
+                  className="flex items-center justify-center max-w-full max-h-full"
+                >
+                  <img
+                    src={file.fileUrl}
+                    alt={file.fileName}
+                    className="max-w-full max-h-[80vh] object-contain rounded shadow-2xl border border-slate-800"
+                  />
+                </div>
+              </div>
+            )
           )}
 
           {/* 3. Excel Viewer */}
