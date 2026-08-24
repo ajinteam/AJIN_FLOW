@@ -387,8 +387,8 @@ export const InfoView: React.FC<InfoViewProps> = ({
     const target = files.find((f) => f.id === fileId);
     if (!target) return;
 
-    if (confirm(`"${target.fileName}" 파일을 영구 삭제하시겠습니까? (복구 불가)`)) {
-      await deleteFileFromServer(target.folder, target.fileName).catch(() => {});
+    if (confirm(`"${target.fileName}" 파일을 클라우드 및 시스템에서 영구 삭제하시겠습니까?`)) {
+      await deleteFileFromServer(target.folder, target.fileName, target.storagePath).catch(() => {});
       const updated = files.filter((f) => f.id !== fileId);
       onUpdateFiles(updated);
     }
@@ -396,10 +396,10 @@ export const InfoView: React.FC<InfoViewProps> = ({
 
   // Permanent Delete Project immediately
   const handlePermanentlyDeleteProject = async (projectId: string) => {
-    if (confirm('프로젝트 및 연결된 모든 파일을 영구 삭제하시겠습니까?')) {
+    if (confirm('프로젝트 및 연결된 모든 파일을 클라우드에서 영구 삭제하시겠습니까?')) {
       const projectFiles = files.filter((f) => f.projectId === projectId);
       for (const pf of projectFiles) {
-        await deleteFileFromServer(pf.folder, pf.fileName).catch(() => {});
+        await deleteFileFromServer(pf.folder, pf.fileName, pf.storagePath).catch(() => {});
       }
 
       const updatedProjects = projects.filter((p) => p.id !== projectId);
@@ -412,9 +412,9 @@ export const InfoView: React.FC<InfoViewProps> = ({
 
   // Empty entire Trash bin
   const handleEmptyTrash = async () => {
-    if (confirm('휴지통의 모든 항목을 즉시 영구 삭제하시겠습니까?')) {
+    if (confirm('휴지통의 모든 항목을 즉시 클라우드 및 DB에서 영구 삭제하시겠습니까?')) {
       for (const tf of trashedFiles) {
-        await deleteFileFromServer(tf.folder, tf.fileName).catch(() => {});
+        await deleteFileFromServer(tf.folder, tf.fileName, tf.storagePath).catch(() => {});
       }
       const updatedFiles = files.filter((f) => f.status !== 'trash');
       const updatedProjects = projects.filter((p) => p.status !== 'trash');
@@ -475,16 +475,16 @@ export const InfoView: React.FC<InfoViewProps> = ({
           </div>
 
           {/* Top Buttons */}
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
             {/* Cloud Sync Button */}
             <button
               onClick={handleSyncCloudflareR2}
               disabled={isSyncingR2}
-              className="flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-sky-400 hover:text-sky-300 border border-slate-700 text-xs sm:text-sm font-semibold transition-all whitespace-nowrap active:scale-95 disabled:opacity-50"
+              className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-sky-400 hover:text-sky-300 border border-slate-700 text-xs sm:text-sm font-semibold transition-all whitespace-nowrap active:scale-95 disabled:opacity-50"
               title="Cloudflare R2 스토리지의 파일과 동기화"
             >
-              <RefreshCw className={`w-4 h-4 ${isSyncingR2 ? 'animate-spin text-sky-400' : 'text-sky-400'}`} />
-              <span>{isSyncingR2 ? '클라우드 동기화 중...' : '클라우드 동기화'}</span>
+              <RefreshCw className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${isSyncingR2 ? 'animate-spin text-sky-400' : 'text-sky-400'}`} />
+              <span>{isSyncingR2 ? '동기화 중...' : '클라우드 동기화'}</span>
             </button>
 
             {canManage && (
@@ -494,9 +494,9 @@ export const InfoView: React.FC<InfoViewProps> = ({
                     setTargetUploadProjectId(undefined);
                     setIsUploadModalOpen(true);
                   }}
-                  className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs sm:text-sm font-semibold transition-all shadow-md shadow-sky-600/20 whitespace-nowrap active:scale-95"
+                  className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs sm:text-sm font-semibold transition-all shadow-md shadow-sky-600/20 whitespace-nowrap active:scale-95"
                 >
-                  <Upload className="w-4 h-4" />
+                  <Upload className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                   <span>업로드</span>
                 </button>
 
@@ -505,9 +505,9 @@ export const InfoView: React.FC<InfoViewProps> = ({
                     setEditingProject(null);
                     setIsProjectModalOpen(true);
                   }}
-                  className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs sm:text-sm font-semibold transition-all whitespace-nowrap active:scale-95"
+                  className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs sm:text-sm font-semibold transition-all whitespace-nowrap active:scale-95"
                 >
-                  <Plus className="w-4 h-4 text-emerald-400" />
+                  <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
                   <span>새 프로젝트</span>
                 </button>
               </>

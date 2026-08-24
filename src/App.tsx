@@ -925,13 +925,13 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#f1f5f9] text-slate-800 flex flex-col font-sans selection:bg-blue-500 selection:text-white">
+    <div className="min-h-screen bg-[#f1f5f9] text-slate-800 flex flex-col font-sans selection:bg-blue-500 selection:text-white w-full max-w-full overflow-x-hidden">
       {/* Top Bar matching screenshot */}
-      <header className="sticky top-0 z-30 bg-white border-b border-slate-200 px-3 sm:px-6 lg:px-8 py-2.5 shadow-sm w-full">
-        <div className="w-full flex items-center justify-between gap-2 sm:gap-4">
+      <header className="sticky top-0 z-30 bg-white border-b border-slate-200 px-2.5 sm:px-6 lg:px-8 py-2 sm:py-2.5 shadow-sm w-full max-w-full">
+        <div className="w-full flex items-center justify-between gap-1.5 sm:gap-4">
           {/* Left Zone: Logo + Tabs + User Badge */}
-          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-            <div className="w-9 h-9 rounded-full bg-blue-600 flex items-center justify-center text-white font-black text-sm shadow-sm select-none">
+          <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-blue-600 flex items-center justify-center text-white font-black text-xs sm:text-sm shadow-sm select-none shrink-0">
               AJ
             </div>
 
@@ -941,13 +941,13 @@ export default function App() {
                 if (canAccessInfo) setCurrentView('info');
                 else alert('INFO 열람 권한이 없습니다. 관리자에게 문의하세요.');
               }}
-              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all whitespace-nowrap border ${
+              className={`flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all whitespace-nowrap border ${
                 currentView === 'info'
                   ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
                   : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
               }`}
             >
-              <FileText className="w-4 h-4" />
+              <FileText className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
               <span>Info</span>
             </button>
 
@@ -961,27 +961,27 @@ export default function App() {
                   alert('FLOW 공정 접근 권한이 없습니다. 관리자에게 문의하세요.');
                 }
               }}
-              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all whitespace-nowrap border ${
+              className={`flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all whitespace-nowrap border ${
                 currentView === 'flow'
                   ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
                   : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
               }`}
             >
-              <Layers className="w-4 h-4" />
+              <Layers className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
               <span>Flow</span>
             </button>
 
             {/* User Badge */}
-            <div className="flex items-center gap-1 px-3 py-1 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-bold">
-              <span>{currentUser?.name || userInitials}</span>
+            <div className="hidden xs:flex items-center gap-1 px-2 sm:px-3 py-1 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-[11px] sm:text-xs font-bold truncate max-w-[110px] sm:max-w-none">
+              <span className="truncate">{currentUser?.name || userInitials}</span>
               {isMaster && (
-                <span className="text-amber-500 font-black">★관리자</span>
+                <span className="text-amber-500 font-black shrink-0">★관리자</span>
               )}
             </div>
           </div>
 
           {/* Right Zone: Completed list + Add Proj + Settings + Refresh + Logout */}
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1 sm:gap-2 shrink-0">
             {currentView === 'flow' && (
               <>
                 <button

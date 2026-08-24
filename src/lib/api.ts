@@ -87,14 +87,20 @@ export function autoPurgeOldTrash(data: InfoDataState): InfoDataState {
   };
 }
 
-export async function deleteFileFromServer(folder: string, fileName: string): Promise<boolean> {
+export async function deleteFileFromServer(folder: string, fileName: string, storagePath?: string): Promise<boolean> {
   try {
-    const res = await fetch(`/api/files/${encodeURIComponent(folder)}/${encodeURIComponent(fileName)}`, {
-      method: 'DELETE',
+    const res = await fetch('/api/delete-file', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        storagePath: storagePath || `${folder}/${fileName}`,
+        folder,
+        fileName,
+      }),
     });
     return res.ok;
   } catch (err) {
-    console.error('Failed to delete file from server:', err);
+    console.error('Failed to delete file from server/R2:', err);
     return false;
   }
 }
