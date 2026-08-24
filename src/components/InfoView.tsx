@@ -1016,38 +1016,20 @@ export const InfoView: React.FC<InfoViewProps> = ({
                                   </div>
 
                                   <div className="min-w-0 flex-1">
-                                    <div className="flex items-center gap-1.5 flex-wrap">
-                                      <p
-                                        className="font-semibold text-xs sm:text-sm text-slate-200 group-hover:text-sky-300 transition-colors break-all leading-snug"
-                                        title={file.fileName}
-                                      >
-                                        {file.fileName}
-                                      </p>
-                                      {file.version && file.version > 1 && (
-                                        <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold">
-                                          v{file.version} 수정됨
-                                        </span>
-                                      )}
-                                    </div>
+                                    <p
+                                      className="font-semibold text-xs sm:text-sm text-slate-200 group-hover:text-sky-300 transition-colors break-all leading-snug"
+                                      title={file.fileName}
+                                    >
+                                      {file.fileName}
+                                    </p>
                                     <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-400 mt-1">
                                       <span className="font-mono">{formatFileSize(file.fileSize)}</span>
                                       <span>•</span>
                                       <span>{file.uploadedBy}</span>
-                                      {file.updatedAt && (
-                                        <>
-                                          <span>•</span>
-                                          <span className={file.version && file.version > 1 ? 'text-amber-400 font-medium' : 'text-slate-400'}>
-                                            {file.version && file.version > 1 ? '수정: ' : '등록: '}
-                                            {(() => {
-                                              try {
-                                                const d = typeof file.updatedAt === 'string' ? parseISO(file.updatedAt) : new Date(file.updatedAt);
-                                                return format(d, 'yyyy-MM-dd HH:mm');
-                                              } catch {
-                                                return file.updatedAt.substring(0, 10);
-                                              }
-                                            })()}
-                                          </span>
-                                        </>
+                                      {file.version && file.version > 1 && (
+                                        <span className="px-1 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-mono text-[10px]">
+                                          v{file.version}
+                                        </span>
                                       )}
                                     </div>
                                   </div>
@@ -1094,11 +1076,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
       )}
 
       {/* MODALS */}
-      <FileViewerModal
-        file={viewingFile}
-        onClose={() => setViewingFile(null)}
-        canDownload={canManage || isMaster}
-      />
+      <FileViewerModal file={viewingFile} onClose={() => setViewingFile(null)} />
 
       <ProjectModal
         isOpen={isProjectModalOpen}
@@ -1113,7 +1091,6 @@ export const InfoView: React.FC<InfoViewProps> = ({
       <UploadModal
         isOpen={isUploadModalOpen}
         projects={projects}
-        existingFiles={files}
         defaultProjectId={targetUploadProjectId}
         onClose={() => {
           setIsUploadModalOpen(false);
