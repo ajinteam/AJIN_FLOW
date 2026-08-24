@@ -56,15 +56,21 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ fileUrl, fileName }) => {
         }
         docInitParams.data = bytes;
       } else {
-        // Fetch binary data directly via fetch for maximum reliability across Vercel/S3/R2/Local
+        // Direct fetch for PDF binary data
         try {
           const response = await fetch(fileUrl);
           if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+            if (response.status === 404) {
+              throw new Error('404');
+            }
+            throw new Error(`HTTP error ${response.status}`);
           }
           const arrayBuffer = await response.arrayBuffer();
           docInitParams.data = new Uint8Array(arrayBuffer);
-        } catch (fetchErr) {
+        } catch (fetchErr: any) {
+          if (fetchErr?.message === '404') {
+            throw new Error('서버 또는 클라우드 스토리지에 해당 PDF 파일이 존재하지 않습니다. 상단의 [클라우드 동기화]를 누르거나 파일을 다시 업로드해 주세요.');
+          }
           console.warn('Direct fetch failed, falling back to direct URL:', fetchErr);
           docInitParams.url = fileUrl;
           docInitParams.withCredentials = false;
@@ -78,7 +84,7 @@ export const PdfViewer: React.FC<PdfViewerProps> = ({ fileUrl, fileName }) => {
       setLoading(false);
     } catch (err: any) {
       console.error('PDF Document load error:', err);
-      setError('PDF 도면을 불러오는 중 문제가 발생했습니다. 다시 시도해 주세요.');
+      setError(err?.message || 'PDF 도면을 불러오는 중 문제가 발생했습니다. 다시 시도해 주세요.');
       setLoading(false);
     }
   }, [fileUrl]);
