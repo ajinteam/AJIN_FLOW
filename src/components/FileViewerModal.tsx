@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { InfoFile } from '../types';
-import { X, Download, ZoomIn, ZoomOut, RotateCw, RotateCcw, FileSpreadsheet, FileText, Image as ImageIcon, Search, Maximize2, Minimize2, Move } from 'lucide-react';
+import { X, Download, ZoomIn, ZoomOut, RotateCw, FileSpreadsheet, FileText, Image as ImageIcon, Search, Maximize2, Minimize2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { format, parseISO } from 'date-fns';
 import { formatFileSize } from '../lib/imageCompressor';
@@ -17,15 +17,6 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose,
   const [rotation, setRotation] = useState<number>(0);
   // Default to true so PC/Desktop opens in full-screen view (Requirement #3)
   const [isFullscreen, setIsFullscreen] = useState<boolean>(true);
-
-  // Pan (Drag / Move) state for single image viewing
-  const [panPosition, setPanPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  const isDraggingRef = useRef<boolean>(false);
-  const dragStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const lastPanRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const initialPinchDistanceRef = useRef<number | null>(null);
-  const initialPinchZoomRef = useRef<number>(100);
-  const lastTapRef = useRef<number>(0);
 
   // Excel viewer state
   const [excelSheets, setExcelSheets] = useState<{ name: string; data: any[][] }[]>([]);
@@ -54,8 +45,6 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose,
   useEffect(() => {
     setZoom(100);
     setRotation(0);
-    setPanPosition({ x: 0, y: 0 });
-    lastPanRef.current = { x: 0, y: 0 };
     setExcelSheets([]);
     setActiveSheetIndex(0);
     setExcelSearch('');
@@ -118,109 +107,12 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose,
   };
 
   const handleZoomIn = () => setZoom((prev) => Math.min(prev + 25, 400));
-  const handleZoomOut = () => {
-    setZoom((prev) => {
-      const next = Math.max(prev - 25, 50);
-      if (next <= 100) {
-        setPanPosition({ x: 0, y: 0 });
-        lastPanRef.current = { x: 0, y: 0 };
-      }
-      return next;
-    });
-  };
+  const handleZoomOut = () => setZoom((prev) => Math.max(prev - 25, 50));
   const handleResetZoom = () => {
     setZoom(100);
-    setPanPosition({ x: 0, y: 0 });
-    lastPanRef.current = { x: 0, y: 0 };
+    setRotation(0);
   };
   const handleRotate = () => setRotation((prev) => (prev + 90) % 360);
-
-  // Mouse Drag to Pan
-  const handleMouseDown = (e: React.MouseEvent) => {
-    if (file?.fileType !== 'image') return;
-    isDraggingRef.current = true;
-    dragStartRef.current = { x: e.clientX - panPosition.x, y: e.clientY - panPosition.y };
-  };
-
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (!isDraggingRef.current) return;
-    const newX = e.clientX - dragStartRef.current.x;
-    const newY = e.clientY - dragStartRef.current.y;
-    setPanPosition({ x: newX, y: newY });
-    lastPanRef.current = { x: newX, y: newY };
-  };
-
-  const handleMouseUp = () => {
-    isDraggingRef.current = false;
-  };
-
-  // Touch Drag to Pan & Pinch to Zoom on Mobile
-  const getTouchDistance = (t1: React.Touch, t2: React.Touch) => {
-    const dx = t1.clientX - t2.clientX;
-    const dy = t1.clientY - t2.clientY;
-    return Math.sqrt(dx * dx + dy * dy);
-  };
-
-  const handleTouchStart = (e: React.TouchEvent) => {
-    if (file?.fileType !== 'image') return;
-
-    if (e.touches.length === 1) {
-      // Single touch: Pan / Drag or Double-tap
-      const touch = e.touches[0];
-      const now = Date.now();
-      if (now - lastTapRef.current < 300) {
-        // Double tap: toggle 100% <-> 200%
-        if (zoom > 100) {
-          handleResetZoom();
-        } else {
-          setZoom(200);
-        }
-        lastTapRef.current = 0;
-        return;
-      }
-      lastTapRef.current = now;
-
-      isDraggingRef.current = true;
-      dragStartRef.current = { x: touch.clientX - panPosition.x, y: touch.clientY - panPosition.y };
-    } else if (e.touches.length === 2) {
-      // Two touches: Pinch to Zoom
-      isDraggingRef.current = false;
-      const dist = getTouchDistance(e.touches[0], e.touches[1]);
-      initialPinchDistanceRef.current = dist;
-      initialPinchZoomRef.current = zoom;
-    }
-  };
-
-  const handleTouchMove = (e: React.TouchEvent) => {
-    if (file?.fileType !== 'image') return;
-
-    if (e.touches.length === 1 && isDraggingRef.current) {
-      // Single touch pan
-      const touch = e.touches[0];
-      const newX = touch.clientX - dragStartRef.current.x;
-      const newY = touch.clientY - dragStartRef.current.y;
-      setPanPosition({ x: newX, y: newY });
-      lastPanRef.current = { x: newX, y: newY };
-    } else if (e.touches.length === 2 && initialPinchDistanceRef.current !== null) {
-      // Pinch zoom calculation
-      const currentDist = getTouchDistance(e.touches[0], e.touches[1]);
-      const scale = currentDist / initialPinchDistanceRef.current;
-      const newZoom = Math.min(Math.max(Math.round(initialPinchZoomRef.current * scale), 50), 400);
-      setZoom(newZoom);
-    }
-  };
-
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    if (e.touches.length === 0) {
-      isDraggingRef.current = false;
-      initialPinchDistanceRef.current = null;
-    } else if (e.touches.length === 1) {
-      initialPinchDistanceRef.current = null;
-      isDraggingRef.current = true;
-      const touch = e.touches[0];
-      dragStartRef.current = { x: touch.clientX - panPosition.x, y: touch.clientY - panPosition.y };
-    }
-  };
 
   // Filter Excel data based on search
   const currentSheet = excelSheets[activeSheetIndex];
@@ -365,14 +257,14 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose,
           {file.fileType === 'image' && (
             file.isImageAlbum && file.imageList && file.imageList.length > 0 ? (
               /* Continuous Vertical Scroll Mode (사진 묶음 / 연속사진) */
-              <div className="w-full h-full overflow-y-auto overflow-x-auto p-2 sm:p-6 touch-pan-y flex flex-col items-center bg-slate-950">
+              <div className="w-full h-full overflow-auto p-2 sm:p-6 bg-slate-950">
                 <div
                   style={{
-                    transform: `scale(${zoom / 100})`,
-                    transformOrigin: 'top center',
-                    transition: 'transform 0.15s ease-out',
+                    width: zoom === 100 ? '100%' : `${zoom}%`,
+                    maxWidth: zoom === 100 ? '48rem' : 'none',
+                    margin: '0 auto',
                   }}
-                  className="w-full max-w-3xl flex flex-col items-center gap-4 my-2"
+                  className="flex flex-col items-center gap-4 my-2 transition-all duration-150"
                 >
                   <div className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-slate-900/90 border border-slate-800 text-xs text-slate-400">
                     <span className="font-semibold text-sky-400 flex items-center gap-1.5">
@@ -383,7 +275,7 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose,
                       {zoom !== 100 && (
                         <button
                           onClick={handleResetZoom}
-                          className="px-2 py-0.5 text-[11px] bg-slate-800 hover:bg-slate-700 text-sky-300 rounded border border-slate-700"
+                          className="px-2 py-0.5 text-[11px] bg-slate-800 hover:bg-slate-700 text-sky-300 rounded border border-slate-700 font-mono"
                         >
                           100% 리셋
                         </button>
@@ -416,48 +308,43 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose,
                 </div>
               </div>
             ) : (
-              /* Single Image Standard Mode with Touch/Mouse Pan & Pinch-to-Zoom */
-              <div
-                className="w-full h-full flex items-center justify-center overflow-hidden p-2 sm:p-4 select-none relative cursor-grab active:cursor-grabbing touch-none"
-                onMouseDown={handleMouseDown}
-                onMouseMove={handleMouseMove}
-                onMouseUp={handleMouseUp}
-                onMouseLeave={handleMouseUp}
-                onTouchStart={handleTouchStart}
-                onTouchMove={handleTouchMove}
-                onTouchEnd={handleTouchEnd}
-              >
-                {/* Floating helper badges when zoomed */}
-                {zoom > 100 && (
-                  <div className="absolute top-3 left-3 z-10 flex items-center gap-2 bg-slate-900/90 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-700/80 shadow-lg text-xs text-slate-300 pointer-events-auto">
-                    <span className="flex items-center gap-1 text-sky-400 font-medium">
-                      <Move className="w-3.5 h-3.5" />
-                      손가락으로 밀어서 이동
+              /* Single Image Standard Mode with Full Multi-directional Native Scroll */
+              <div className="w-full h-full overflow-auto p-4 bg-slate-950 relative">
+                {/* Floating Zoom status & quick reset badge when zoomed */}
+                {zoom !== 100 && (
+                  <div className="fixed sm:absolute top-16 left-4 z-20 flex items-center gap-2 bg-slate-900/95 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-700 shadow-xl text-xs text-slate-300 pointer-events-auto">
+                    <span className="font-semibold text-sky-400">
+                      {zoom}% (상하좌우 스크롤 가능)
                     </span>
-                    <span className="text-slate-500">|</span>
+                    <span className="text-slate-600">|</span>
                     <button
                       onClick={handleResetZoom}
-                      className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 font-mono text-[11px]"
+                      className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 font-mono text-[11px] border border-slate-700 transition-colors"
                     >
-                      초기화 (100%)
+                      100% 원본
                     </button>
                   </div>
                 )}
 
-                <div
-                  style={{
-                    transform: `translate(${panPosition.x}px, ${panPosition.y}px) scale(${zoom / 100}) rotate(${rotation}deg)`,
-                    transition: isDraggingRef.current ? 'none' : 'transform 0.15s ease-out',
-                    transformOrigin: 'center center',
-                  }}
-                  className="flex items-center justify-center max-w-full max-h-full"
-                >
-                  <img
-                    src={file.fileUrl}
-                    alt={file.fileName}
-                    draggable={false}
-                    className="max-w-[90vw] max-h-[80vh] md:max-w-full md:max-h-[82vh] object-contain rounded shadow-2xl border border-slate-800 pointer-events-none select-none"
-                  />
+                <div className="m-auto flex items-center justify-center min-w-full min-h-full">
+                  <div
+                    className="transition-all duration-150 flex items-center justify-center"
+                    style={{
+                      width: zoom === 100 ? 'auto' : `${zoom}%`,
+                      maxWidth: zoom === 100 ? '100%' : 'none',
+                      transform: rotation !== 0 ? `rotate(${rotation}deg)` : undefined,
+                    }}
+                  >
+                    <img
+                      src={file.fileUrl}
+                      alt={file.fileName}
+                      className={`object-contain rounded shadow-2xl border border-slate-800 transition-all duration-150 ${
+                        zoom === 100
+                          ? 'max-w-[90vw] max-h-[80vh] md:max-w-full md:max-h-[82vh]'
+                          : 'w-full h-auto'
+                      }`}
+                    />
+                  </div>
                 </div>
               </div>
             )
