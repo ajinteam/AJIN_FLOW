@@ -154,7 +154,7 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose,
                       : 'bg-sky-500/20 text-sky-300 border border-sky-500/30'
                   }`}
                 >
-                  {file.isImageAlbum ? `웹툰앨범 (${file.imageList?.length || 'N'}P)` : `V${file.version || 1}`}
+                  {file.isImageAlbum ? `연속사진 (${file.imageList?.length || 'N'}P)` : `V${file.version || 1}`}
                 </span>
               </div>
               <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400 whitespace-nowrap mt-0.5">
@@ -265,7 +265,7 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose,
                   <div className="w-full flex items-center justify-between px-2 py-1.5 rounded-lg bg-slate-900/90 border border-slate-800 text-xs text-slate-400">
                     <span className="font-semibold text-sky-400 flex items-center gap-1.5">
                       <ImageIcon className="w-4 h-4" />
-                      연속 사진 앨범 (웹툰 모드) • 총 {file.imageList.length}장
+                      연속사진 • 총 {file.imageList.length}장
                     </span>
                     <span>위아래로 스크롤하여 연속 열람</span>
                   </div>

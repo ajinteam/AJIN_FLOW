@@ -114,17 +114,20 @@ const Auth = ({
       }
 
       if (inputPassword === '5200') {
+        // Find existing user if configured or default to J-SUNG
+        const matchedUser = users.find((u) => u.password === '5200');
+        const userInitialsName = matchedUser?.initials || 'J-SUNG';
         const user5200: UserConfig = {
-          id: '5200',
-          initials: '5200',
-          name: '관리자 5200',
+          id: matchedUser?.id || '5200',
+          initials: userInitialsName,
+          name: matchedUser?.name || 'J-SUNG',
           password: '5200',
           isAuthorized: true,
           canAccessFlow: true,
           canAccessInfo: true,
           canManageInfo: true,
         };
-        onLogin('5200', '5200', user5200);
+        onLogin(userInitialsName, '5200', user5200);
         localStorage.setItem('isAuthorized', 'true');
         localStorage.setItem('currentUserPassword', '5200');
         return;
@@ -270,8 +273,29 @@ export default function App() {
   const loadInfoData = useCallback(async () => {
     try {
       const res = await fetchInfoData();
-      setInfoProjects(res.projects || []);
-      setInfoFiles(res.files || []);
+      const loadedProjects = res.projects || [];
+      // Clean up legacy '5200' uploadedBy to 'J-SUNG' on loaded records
+      let filesChanged = false;
+      const loadedFiles = (res.files || []).map((f) => {
+        let updated = { ...f };
+        if (f.uploadedBy === '5200') {
+          updated.uploadedBy = 'J-SUNG';
+          filesChanged = true;
+        }
+        // Also clean up album names from '(웹툰/연속사진' or '현장 사진 묶음' to '사진 묶음 (연속사진)'
+        if (updated.fileName && updated.fileName.includes('(웹툰')) {
+          updated.fileName = updated.fileName.replace('(웹툰/연속사진', '(연속사진').replace('현장 사진 묶음', '사진 묶음');
+          filesChanged = true;
+        }
+        return updated;
+      });
+
+      setInfoProjects(loadedProjects);
+      setInfoFiles(loadedFiles);
+
+      if (filesChanged) {
+        saveInfoData({ projects: loadedProjects, files: loadedFiles });
+      }
     } catch (e) {
       console.error('Failed to load info data:', e);
     }
@@ -429,6 +453,7 @@ export default function App() {
   // User details & permission calculation
   const currentUser = useMemo(() => {
     if (!userInitials) return null;
+    if (userInitials === '5200') return { initials: 'J-SUNG', name: 'J-SUNG', id: '5200', password: '5200', isAuthorized: true, canAccessFlow: true, canAccessInfo: true, canManageInfo: true };
     return flowData.users.find(
       (u) => u.initials.toUpperCase() === userInitials.toUpperCase()
     );
@@ -437,6 +462,7 @@ export default function App() {
   const isMaster =
     userInitials === 'MASTER' ||
     userInitials === '5200' ||
+    userInitials === 'J-SUNG' ||
     currentUserPassword.toUpperCase() === MASTER_PASSWORD ||
     currentUserPassword === '5200' ||
     Boolean(currentUser?.isAuthorized);
@@ -446,6 +472,7 @@ export default function App() {
   const canManageInfo =
     isMaster ||
     userInitials === '5200' ||
+    userInitials === 'J-SUNG' ||
     Boolean(currentUser?.canManageInfo);
 
   // If user only has permission for flow, auto-switch
@@ -1096,7 +1123,7 @@ export default function App() {
           <InfoView
             projects={infoProjects}
             files={infoFiles}
-            currentUserInitials={userInitials}
+            currentUserInitials={currentUser?.initials || (userInitials === '5200' ? 'J-SUNG' : userInitials)}
             isMaster={isMaster}
             canManage={canManageInfo}
             onUpdateProjects={handleUpdateInfoProjects}

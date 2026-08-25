@@ -476,10 +476,10 @@ export async function uploadImageAlbum(
   }
 
   const now = new Date().toISOString();
-  const cleanTitle = albumTitle.trim() || `현장 사진 묶음 (${files.length}장)`;
-  const finalFileName = cleanTitle.endsWith('.album') || cleanTitle.includes('(웹툰)')
+  const cleanTitle = albumTitle.trim() || `사진 묶음 (${files.length}장)`;
+  const finalFileName = cleanTitle.endsWith('.album') || cleanTitle.includes('(연속사진')
     ? cleanTitle
-    : `${cleanTitle} (웹툰/연속사진 ${files.length}P)`;
+    : `${cleanTitle} (연속사진 ${files.length}P)`;
 
   const albumRecord: InfoFile = {
     id: `album_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,

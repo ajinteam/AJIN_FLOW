@@ -1130,7 +1130,7 @@ export const InfoView: React.FC<InfoViewProps> = ({
                                             : 'bg-sky-500/20 text-sky-300 border border-sky-500/30'
                                         }`}
                                       >
-                                        {file.isImageAlbum ? `웹툰앨범 (${file.imageList?.length || 'N'}P)` : `V${file.version || 1}`}
+                                        {file.isImageAlbum ? `연속사진 (${file.imageList?.length || 'N'}P)` : `V${file.version || 1}`}
                                       </span>
                                       <span className="font-mono">{formatFileSize(file.fileSize)}</span>
                                       <span>•</span>

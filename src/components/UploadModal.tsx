@@ -268,7 +268,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           {/* 3. Staged Files List */}
           {stagedFiles.length > 0 && (
             <div className="space-y-2.5">
-              {/* Webtoon Album Mode Toggle if 2+ images */}
+              {/* Continuous Photo Album Mode Toggle if 2+ images */}
               {stagedImageCount > 1 && (
                 <div className="p-3.5 rounded-xl bg-gradient-to-r from-sky-950/70 to-indigo-950/70 border border-sky-500/40 space-y-2">
                   <label className="flex items-center gap-2.5 cursor-pointer select-none">
@@ -281,10 +281,10 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                     <div className="flex-1">
                       <div className="flex items-center gap-1.5 font-semibold text-xs sm:text-sm text-sky-200">
                         <Sparkles className="w-4 h-4 text-sky-400" />
-                        <span>사진 {stagedImageCount}장을 1개의 연속 앨범으로 묶기 (웹툰 모드)</span>
+                        <span>사진 {stagedImageCount}장을 1개로 묶기 (연속사진)</span>
                       </div>
                       <p className="text-[11px] text-slate-400 mt-0.5">
-                        목록이 지저분해지지 않고, 클릭 시 위아래로 길게 이어지는 스크롤로 연속 열람합니다.
+                        목록이 깔끔해지고, 클릭 시 위아래로 길게 이어지는 스크롤로 연속 열람합니다.
                       </p>
                     </div>
                   </label>
@@ -295,7 +295,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                         type="text"
                         value={albumTitle}
                         onChange={(e) => setAlbumTitle(e.target.value)}
-                        placeholder={`앨범 제목 입력 (예: ${activeProjects.find(p=>p.id===selectedProjectId)?.machineType || '현장'} 조립 공정 사진)`}
+                        placeholder={`사진 묶음 제목 입력 (예: ${activeProjects.find(p=>p.id===selectedProjectId)?.machineType || '조립'} 사진 묶음)`}
                         className="w-full px-3 py-1.5 rounded-lg bg-slate-900/90 border border-sky-500/30 text-slate-100 text-xs focus:outline-none focus:ring-1 focus:ring-sky-400 placeholder-slate-500 font-medium"
                       />
                     </div>
