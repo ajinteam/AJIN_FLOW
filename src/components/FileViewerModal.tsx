@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { InfoFile } from '../types';
-import { X, Download, ZoomIn, ZoomOut, RotateCw, RotateCcw, FileSpreadsheet, FileText, Image as ImageIcon, Search, Maximize2, Minimize2, Move, ChevronUp, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
+import { X, Download, ZoomIn, ZoomOut, RotateCw, RotateCcw, FileSpreadsheet, FileText, Image as ImageIcon, Search, Maximize2, Minimize2, Move } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { format, parseISO } from 'date-fns';
 import { formatFileSize } from '../lib/imageCompressor';
@@ -18,138 +18,14 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose,
   // Default to true so PC/Desktop opens in full-screen view (Requirement #3)
   const [isFullscreen, setIsFullscreen] = useState<boolean>(true);
 
-  // Pointer / Touch Pan & Pinch-Zoom state
+  // Pan (Drag / Move) state for single image viewing
   const [panPosition, setPanPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  const imageContainerRef = useRef<HTMLDivElement | null>(null);
-
-  // Mutable refs to track coordinates without re-rendering lags or state drops
-  const panRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const zoomRef = useRef<number>(100);
-  const touchStartPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const touchStartPanRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const initialDistanceRef = useRef<number | null>(null);
-  const initialZoomOnPinchRef = useRef<number>(100);
+  const isDraggingRef = useRef<boolean>(false);
+  const dragStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const lastPanRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const initialPinchDistanceRef = useRef<number | null>(null);
+  const initialPinchZoomRef = useRef<number>(100);
   const lastTapRef = useRef<number>(0);
-  const isInteractingRef = useRef<boolean>(false);
-
-  // Keep refs in sync with state
-  useEffect(() => {
-    panRef.current = panPosition;
-  }, [panPosition]);
-
-  useEffect(() => {
-    zoomRef.current = zoom;
-  }, [zoom]);
-
-  // Robust Native Touch Event Engine for Mobile (solves mobile pan/drag issue completely)
-  useEffect(() => {
-    const el = imageContainerRef.current;
-    if (!el || file?.fileType !== 'image') return;
-
-    const onTouchStart = (e: TouchEvent) => {
-      // Don't interfere if touching interactive UI controls (buttons, badges)
-      const target = e.target as HTMLElement | null;
-      if (target && target.closest('button')) return;
-
-      if (e.touches.length === 1) {
-        // Single Finger Touch: Pan Drag & Double-Tap
-        const touch = e.touches[0];
-        const now = Date.now();
-
-        if (now - lastTapRef.current < 300) {
-          // Double Tap: Toggle between 100% and 200%
-          e.preventDefault();
-          if (zoomRef.current > 100) {
-            setZoom(100);
-            zoomRef.current = 100;
-            setPanPosition({ x: 0, y: 0 });
-            panRef.current = { x: 0, y: 0 };
-          } else {
-            setZoom(200);
-            zoomRef.current = 200;
-          }
-          lastTapRef.current = 0;
-          isInteractingRef.current = false;
-          return;
-        }
-        lastTapRef.current = now;
-
-        isInteractingRef.current = true;
-        touchStartPosRef.current = { x: touch.clientX, y: touch.clientY };
-        touchStartPanRef.current = { ...panRef.current };
-      } else if (e.touches.length === 2) {
-        // Two Fingers Touch: Pinch Zoom
-        e.preventDefault();
-        isInteractingRef.current = true;
-        const t1 = e.touches[0];
-        const t2 = e.touches[1];
-        initialDistanceRef.current = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
-        initialZoomOnPinchRef.current = zoomRef.current;
-      }
-    };
-
-    const onTouchMove = (e: TouchEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (target && target.closest('button')) return;
-
-      if (e.touches.length === 1 && isInteractingRef.current) {
-        // Prevent mobile Safari/Chrome pull-to-refresh & screen bounce
-        e.preventDefault();
-        const touch = e.touches[0];
-        const deltaX = touch.clientX - touchStartPosRef.current.x;
-        const deltaY = touch.clientY - touchStartPosRef.current.y;
-
-        const newPan = {
-          x: touchStartPanRef.current.x + deltaX,
-          y: touchStartPanRef.current.y + deltaY,
-        };
-        panRef.current = newPan;
-        setPanPosition(newPan);
-      } else if (e.touches.length === 2 && initialDistanceRef.current !== null) {
-        // Pinch Zoom
-        e.preventDefault();
-        const t1 = e.touches[0];
-        const t2 = e.touches[1];
-        const currentDistance = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
-        const scale = currentDistance / initialDistanceRef.current;
-        const nextZoom = Math.min(Math.max(Math.round(initialZoomOnPinchRef.current * scale), 50), 400);
-
-        zoomRef.current = nextZoom;
-        setZoom(nextZoom);
-      }
-    };
-
-    const onTouchEnd = (e: TouchEvent) => {
-      if (e.touches.length === 0) {
-        isInteractingRef.current = false;
-        initialDistanceRef.current = null;
-      } else if (e.touches.length === 1) {
-        // Switch from pinch to single finger pan smoothly
-        const touch = e.touches[0];
-        isInteractingRef.current = true;
-        initialDistanceRef.current = null;
-        touchStartPosRef.current = { x: touch.clientX, y: touch.clientY };
-        touchStartPanRef.current = { ...panRef.current };
-      }
-    };
-
-    const onTouchCancel = () => {
-      isInteractingRef.current = false;
-      initialDistanceRef.current = null;
-    };
-
-    el.addEventListener('touchstart', onTouchStart, { passive: false });
-    el.addEventListener('touchmove', onTouchMove, { passive: false });
-    el.addEventListener('touchend', onTouchEnd, { passive: false });
-    el.addEventListener('touchcancel', onTouchCancel, { passive: false });
-
-    return () => {
-      el.removeEventListener('touchstart', onTouchStart);
-      el.removeEventListener('touchmove', onTouchMove);
-      el.removeEventListener('touchend', onTouchEnd);
-      el.removeEventListener('touchcancel', onTouchCancel);
-    };
-  }, [file]);
 
   // Excel viewer state
   const [excelSheets, setExcelSheets] = useState<{ name: string; data: any[][] }[]>([]);
@@ -179,6 +55,7 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose,
     setZoom(100);
     setRotation(0);
     setPanPosition({ x: 0, y: 0 });
+    lastPanRef.current = { x: 0, y: 0 };
     setExcelSheets([]);
     setActiveSheetIndex(0);
     setExcelSearch('');
@@ -246,6 +123,7 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose,
       const next = Math.max(prev - 25, 50);
       if (next <= 100) {
         setPanPosition({ x: 0, y: 0 });
+        lastPanRef.current = { x: 0, y: 0 };
       }
       return next;
     });
@@ -253,48 +131,95 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose,
   const handleResetZoom = () => {
     setZoom(100);
     setPanPosition({ x: 0, y: 0 });
+    lastPanRef.current = { x: 0, y: 0 };
   };
   const handleRotate = () => setRotation((prev) => (prev + 90) % 360);
 
-  // Directional step move
-  const handleStepPan = (dx: number, dy: number) => {
-    setPanPosition((prev) => ({
-      x: prev.x + dx,
-      y: prev.y + dy,
-    }));
-  };
-
-  // Desktop Mouse Drag to Pan
-  const isMouseDraggingRef = useRef<boolean>(false);
-  const mouseStartPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const mouseStartPanRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-
+  // Mouse Drag to Pan
   const handleMouseDown = (e: React.MouseEvent) => {
     if (file?.fileType !== 'image') return;
-    const target = e.target as HTMLElement | null;
-    if (target && target.closest('button')) return;
-
-    isMouseDraggingRef.current = true;
-    isInteractingRef.current = true;
-    mouseStartPosRef.current = { x: e.clientX, y: e.clientY };
-    mouseStartPanRef.current = { ...panRef.current };
+    isDraggingRef.current = true;
+    dragStartRef.current = { x: e.clientX - panPosition.x, y: e.clientY - panPosition.y };
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
-    if (!isMouseDraggingRef.current) return;
-    const deltaX = e.clientX - mouseStartPosRef.current.x;
-    const deltaY = e.clientY - mouseStartPosRef.current.y;
-    const newPan = {
-      x: mouseStartPanRef.current.x + deltaX,
-      y: mouseStartPanRef.current.y + deltaY,
-    };
-    panRef.current = newPan;
-    setPanPosition(newPan);
+    if (!isDraggingRef.current) return;
+    const newX = e.clientX - dragStartRef.current.x;
+    const newY = e.clientY - dragStartRef.current.y;
+    setPanPosition({ x: newX, y: newY });
+    lastPanRef.current = { x: newX, y: newY };
   };
 
   const handleMouseUp = () => {
-    isMouseDraggingRef.current = false;
-    isInteractingRef.current = false;
+    isDraggingRef.current = false;
+  };
+
+  // Touch Drag to Pan & Pinch to Zoom on Mobile
+  const getTouchDistance = (t1: React.Touch, t2: React.Touch) => {
+    const dx = t1.clientX - t2.clientX;
+    const dy = t1.clientY - t2.clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (file?.fileType !== 'image') return;
+
+    if (e.touches.length === 1) {
+      // Single touch: Pan / Drag or Double-tap
+      const touch = e.touches[0];
+      const now = Date.now();
+      if (now - lastTapRef.current < 300) {
+        // Double tap: toggle 100% <-> 200%
+        if (zoom > 100) {
+          handleResetZoom();
+        } else {
+          setZoom(200);
+        }
+        lastTapRef.current = 0;
+        return;
+      }
+      lastTapRef.current = now;
+
+      isDraggingRef.current = true;
+      dragStartRef.current = { x: touch.clientX - panPosition.x, y: touch.clientY - panPosition.y };
+    } else if (e.touches.length === 2) {
+      // Two touches: Pinch to Zoom
+      isDraggingRef.current = false;
+      const dist = getTouchDistance(e.touches[0], e.touches[1]);
+      initialPinchDistanceRef.current = dist;
+      initialPinchZoomRef.current = zoom;
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (file?.fileType !== 'image') return;
+
+    if (e.touches.length === 1 && isDraggingRef.current) {
+      // Single touch pan
+      const touch = e.touches[0];
+      const newX = touch.clientX - dragStartRef.current.x;
+      const newY = touch.clientY - dragStartRef.current.y;
+      setPanPosition({ x: newX, y: newY });
+      lastPanRef.current = { x: newX, y: newY };
+    } else if (e.touches.length === 2 && initialPinchDistanceRef.current !== null) {
+      // Pinch zoom calculation
+      const currentDist = getTouchDistance(e.touches[0], e.touches[1]);
+      const scale = currentDist / initialPinchDistanceRef.current;
+      const newZoom = Math.min(Math.max(Math.round(initialPinchZoomRef.current * scale), 50), 400);
+      setZoom(newZoom);
+    }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (e.touches.length === 0) {
+      isDraggingRef.current = false;
+      initialPinchDistanceRef.current = null;
+    } else if (e.touches.length === 1) {
+      initialPinchDistanceRef.current = null;
+      isDraggingRef.current = true;
+      const touch = e.touches[0];
+      dragStartRef.current = { x: touch.clientX - panPosition.x, y: touch.clientY - panPosition.y };
+    }
   };
 
   // Filter Excel data based on search
@@ -493,82 +418,39 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose,
             ) : (
               /* Single Image Standard Mode with Touch/Mouse Pan & Pinch-to-Zoom */
               <div
-                ref={imageContainerRef}
-                style={{ touchAction: 'none' }}
-                className="w-full h-full flex items-center justify-center overflow-hidden p-2 sm:p-4 select-none relative cursor-grab active:cursor-grabbing"
+                className="w-full h-full flex items-center justify-center overflow-hidden p-2 sm:p-4 select-none relative cursor-grab active:cursor-grabbing touch-none"
                 onMouseDown={handleMouseDown}
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
                 onMouseLeave={handleMouseUp}
+                onTouchStart={handleTouchStart}
+                onTouchMove={handleTouchMove}
+                onTouchEnd={handleTouchEnd}
               >
-                {/* Floating helper badges and Mini D-pad when zoomed */}
+                {/* Floating helper badges when zoomed */}
                 {zoom > 100 && (
-                  <>
-                    {/* Top-left zoom reset & instruction badge */}
-                    <div className="absolute top-3 left-3 z-20 flex items-center gap-2 bg-slate-900/95 backdrop-blur-md px-3 py-1.5 rounded-xl border border-sky-500/40 shadow-xl text-xs text-slate-200 pointer-events-auto">
-                      <span className="flex items-center gap-1 text-sky-400 font-semibold">
-                        <Move className="w-3.5 h-3.5" />
-                        손가락 밀어서 이동
-                      </span>
-                      <span className="text-slate-600">|</span>
-                      <button
-                        onClick={handleResetZoom}
-                        className="px-2 py-0.5 rounded bg-sky-950 hover:bg-sky-900 text-sky-300 font-medium text-[11px] border border-sky-600/40 active:scale-95 transition-all"
-                      >
-                        100% 복귀
-                      </button>
-                    </div>
-
-                    {/* Bottom-right Mini Directional Buttons (상하좌우 미세이동) */}
-                    <div className="absolute bottom-4 right-4 z-20 flex flex-col items-center gap-1 bg-slate-900/90 backdrop-blur-md p-1.5 rounded-2xl border border-slate-700 shadow-2xl pointer-events-auto">
-                      <button
-                        onClick={() => handleStepPan(0, 60)}
-                        title="위로 이동"
-                        className="w-8 h-8 flex items-center justify-center rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 active:bg-sky-600 transition-colors shadow-sm"
-                      >
-                        <ChevronUp className="w-4 h-4" />
-                      </button>
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => handleStepPan(60, 0)}
-                          title="왼쪽으로 이동"
-                          className="w-8 h-8 flex items-center justify-center rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 active:bg-sky-600 transition-colors shadow-sm"
-                        >
-                          <ChevronLeft className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={handleResetZoom}
-                          title="중앙 원점 복귀"
-                          className="w-8 h-8 flex items-center justify-center rounded-xl bg-sky-950 text-sky-400 font-bold text-[10px] border border-sky-600/40 active:scale-95"
-                        >
-                          중앙
-                        </button>
-                        <button
-                          onClick={() => handleStepPan(-60, 0)}
-                          title="오른쪽으로 이동"
-                          className="w-8 h-8 flex items-center justify-center rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 active:bg-sky-600 transition-colors shadow-sm"
-                        >
-                          <ChevronRight className="w-4 h-4" />
-                        </button>
-                      </div>
-                      <button
-                        onClick={() => handleStepPan(0, -60)}
-                        title="아래로 이동"
-                        className="w-8 h-8 flex items-center justify-center rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 active:bg-sky-600 transition-colors shadow-sm"
-                      >
-                        <ChevronDown className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </>
+                  <div className="absolute top-3 left-3 z-10 flex items-center gap-2 bg-slate-900/90 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-700/80 shadow-lg text-xs text-slate-300 pointer-events-auto">
+                    <span className="flex items-center gap-1 text-sky-400 font-medium">
+                      <Move className="w-3.5 h-3.5" />
+                      손가락으로 밀어서 이동
+                    </span>
+                    <span className="text-slate-500">|</span>
+                    <button
+                      onClick={handleResetZoom}
+                      className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-sky-300 font-mono text-[11px]"
+                    >
+                      초기화 (100%)
+                    </button>
+                  </div>
                 )}
 
                 <div
                   style={{
                     transform: `translate(${panPosition.x}px, ${panPosition.y}px) scale(${zoom / 100}) rotate(${rotation}deg)`,
-                    transition: isInteractingRef.current ? 'none' : 'transform 0.1s ease-out',
+                    transition: isDraggingRef.current ? 'none' : 'transform 0.15s ease-out',
                     transformOrigin: 'center center',
                   }}
-                  className="flex items-center justify-center max-w-full max-h-full pointer-events-none"
+                  className="flex items-center justify-center max-w-full max-h-full"
                 >
                   <img
                     src={file.fileUrl}
