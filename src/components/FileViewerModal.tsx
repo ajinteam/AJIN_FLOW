@@ -21,26 +21,133 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose,
   // Pointer / Touch Pan & Pinch-Zoom state
   const [panPosition, setPanPosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const imageContainerRef = useRef<HTMLDivElement | null>(null);
-  const activePointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
-  const initialPinchDistanceRef = useRef<number | null>(null);
-  const initialPinchZoomRef = useRef<number>(100);
-  const lastTapRef = useRef<number>(0);
 
-  // Prevent mobile browser default gesture hijacking
+  // Mutable refs to track coordinates without re-rendering lags or state drops
+  const panRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const zoomRef = useRef<number>(100);
+  const touchStartPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const touchStartPanRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const initialDistanceRef = useRef<number | null>(null);
+  const initialZoomOnPinchRef = useRef<number>(100);
+  const lastTapRef = useRef<number>(0);
+  const isInteractingRef = useRef<boolean>(false);
+
+  // Keep refs in sync with state
+  useEffect(() => {
+    panRef.current = panPosition;
+  }, [panPosition]);
+
+  useEffect(() => {
+    zoomRef.current = zoom;
+  }, [zoom]);
+
+  // Robust Native Touch Event Engine for Mobile (solves mobile pan/drag issue completely)
   useEffect(() => {
     const el = imageContainerRef.current;
-    if (!el) return;
+    if (!el || file?.fileType !== 'image') return;
 
-    const preventDefaultTouch = (e: TouchEvent) => {
-      // Prevent browser bounce / pull-down drag on mobile
-      if (e.touches.length > 0) {
+    const onTouchStart = (e: TouchEvent) => {
+      // Don't interfere if touching interactive UI controls (buttons, badges)
+      const target = e.target as HTMLElement | null;
+      if (target && target.closest('button')) return;
+
+      if (e.touches.length === 1) {
+        // Single Finger Touch: Pan Drag & Double-Tap
+        const touch = e.touches[0];
+        const now = Date.now();
+
+        if (now - lastTapRef.current < 300) {
+          // Double Tap: Toggle between 100% and 200%
+          e.preventDefault();
+          if (zoomRef.current > 100) {
+            setZoom(100);
+            zoomRef.current = 100;
+            setPanPosition({ x: 0, y: 0 });
+            panRef.current = { x: 0, y: 0 };
+          } else {
+            setZoom(200);
+            zoomRef.current = 200;
+          }
+          lastTapRef.current = 0;
+          isInteractingRef.current = false;
+          return;
+        }
+        lastTapRef.current = now;
+
+        isInteractingRef.current = true;
+        touchStartPosRef.current = { x: touch.clientX, y: touch.clientY };
+        touchStartPanRef.current = { ...panRef.current };
+      } else if (e.touches.length === 2) {
+        // Two Fingers Touch: Pinch Zoom
         e.preventDefault();
+        isInteractingRef.current = true;
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        initialDistanceRef.current = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+        initialZoomOnPinchRef.current = zoomRef.current;
       }
     };
 
-    el.addEventListener('touchmove', preventDefaultTouch, { passive: false });
+    const onTouchMove = (e: TouchEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && target.closest('button')) return;
+
+      if (e.touches.length === 1 && isInteractingRef.current) {
+        // Prevent mobile Safari/Chrome pull-to-refresh & screen bounce
+        e.preventDefault();
+        const touch = e.touches[0];
+        const deltaX = touch.clientX - touchStartPosRef.current.x;
+        const deltaY = touch.clientY - touchStartPosRef.current.y;
+
+        const newPan = {
+          x: touchStartPanRef.current.x + deltaX,
+          y: touchStartPanRef.current.y + deltaY,
+        };
+        panRef.current = newPan;
+        setPanPosition(newPan);
+      } else if (e.touches.length === 2 && initialDistanceRef.current !== null) {
+        // Pinch Zoom
+        e.preventDefault();
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        const currentDistance = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+        const scale = currentDistance / initialDistanceRef.current;
+        const nextZoom = Math.min(Math.max(Math.round(initialZoomOnPinchRef.current * scale), 50), 400);
+
+        zoomRef.current = nextZoom;
+        setZoom(nextZoom);
+      }
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length === 0) {
+        isInteractingRef.current = false;
+        initialDistanceRef.current = null;
+      } else if (e.touches.length === 1) {
+        // Switch from pinch to single finger pan smoothly
+        const touch = e.touches[0];
+        isInteractingRef.current = true;
+        initialDistanceRef.current = null;
+        touchStartPosRef.current = { x: touch.clientX, y: touch.clientY };
+        touchStartPanRef.current = { ...panRef.current };
+      }
+    };
+
+    const onTouchCancel = () => {
+      isInteractingRef.current = false;
+      initialDistanceRef.current = null;
+    };
+
+    el.addEventListener('touchstart', onTouchStart, { passive: false });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    el.addEventListener('touchend', onTouchEnd, { passive: false });
+    el.addEventListener('touchcancel', onTouchCancel, { passive: false });
+
     return () => {
-      el.removeEventListener('touchmove', preventDefaultTouch);
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEnd);
+      el.removeEventListener('touchcancel', onTouchCancel);
     };
   }, [file]);
 
@@ -157,77 +264,37 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose,
     }));
   };
 
-  // Pointer Down (Mouse & Touch)
-  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+  // Desktop Mouse Drag to Pan
+  const isMouseDraggingRef = useRef<boolean>(false);
+  const mouseStartPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const mouseStartPanRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  const handleMouseDown = (e: React.MouseEvent) => {
     if (file?.fileType !== 'image') return;
-    try {
-      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    } catch (_) {}
+    const target = e.target as HTMLElement | null;
+    if (target && target.closest('button')) return;
 
-    activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-
-    // Double tap detection
-    if (activePointersRef.current.size === 1) {
-      const now = Date.now();
-      if (now - lastTapRef.current < 300) {
-        if (zoom > 100) {
-          handleResetZoom();
-        } else {
-          setZoom(200);
-        }
-        lastTapRef.current = 0;
-        return;
-      }
-      lastTapRef.current = now;
-    } else if (activePointersRef.current.size === 2) {
-      const pts: { x: number; y: number }[] = Array.from(activePointersRef.current.values());
-      if (pts.length >= 2) {
-        initialPinchDistanceRef.current = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-        initialPinchZoomRef.current = zoom;
-      }
-    }
+    isMouseDraggingRef.current = true;
+    isInteractingRef.current = true;
+    mouseStartPosRef.current = { x: e.clientX, y: e.clientY };
+    mouseStartPanRef.current = { ...panRef.current };
   };
 
-  // Pointer Move (Mouse & Touch Drag)
-  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (file?.fileType !== 'image') return;
-    const prevPos = activePointersRef.current.get(e.pointerId);
-    if (!prevPos) return;
-
-    const currentPos = { x: e.clientX, y: e.clientY };
-
-    if (activePointersRef.current.size === 1) {
-      // 1 Finger / Cursor Drag: Realtime Delta Pan
-      const dx = currentPos.x - prevPos.x;
-      const dy = currentPos.y - prevPos.y;
-      setPanPosition((prev) => ({
-        x: prev.x + dx,
-        y: prev.y + dy,
-      }));
-    } else if (activePointersRef.current.size === 2 && initialPinchDistanceRef.current) {
-      activePointersRef.current.set(e.pointerId, currentPos);
-      const pts: { x: number; y: number }[] = Array.from(activePointersRef.current.values());
-      if (pts.length >= 2) {
-        const currentDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-        const scale = currentDist / initialPinchDistanceRef.current;
-        const newZoom = Math.min(Math.max(Math.round(initialPinchZoomRef.current * scale), 50), 400);
-        setZoom(newZoom);
-      }
-      return;
-    }
-
-    activePointersRef.current.set(e.pointerId, currentPos);
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isMouseDraggingRef.current) return;
+    const deltaX = e.clientX - mouseStartPosRef.current.x;
+    const deltaY = e.clientY - mouseStartPosRef.current.y;
+    const newPan = {
+      x: mouseStartPanRef.current.x + deltaX,
+      y: mouseStartPanRef.current.y + deltaY,
+    };
+    panRef.current = newPan;
+    setPanPosition(newPan);
   };
 
-  // Pointer Up & Cancel
-  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    activePointersRef.current.delete(e.pointerId);
-    if (activePointersRef.current.size < 2) {
-      initialPinchDistanceRef.current = null;
-    }
-    try {
-      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-    } catch (_) {}
+  const handleMouseUp = () => {
+    isMouseDraggingRef.current = false;
+    isInteractingRef.current = false;
   };
 
   // Filter Excel data based on search
@@ -429,10 +496,10 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose,
                 ref={imageContainerRef}
                 style={{ touchAction: 'none' }}
                 className="w-full h-full flex items-center justify-center overflow-hidden p-2 sm:p-4 select-none relative cursor-grab active:cursor-grabbing"
-                onPointerDown={handlePointerDown}
-                onPointerMove={handlePointerMove}
-                onPointerUp={handlePointerUp}
-                onPointerCancel={handlePointerUp}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseUp}
               >
                 {/* Floating helper badges and Mini D-pad when zoomed */}
                 {zoom > 100 && (
@@ -498,7 +565,7 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({ file, onClose,
                 <div
                   style={{
                     transform: `translate(${panPosition.x}px, ${panPosition.y}px) scale(${zoom / 100}) rotate(${rotation}deg)`,
-                    transition: activePointersRef.current.size > 0 ? 'none' : 'transform 0.12s ease-out',
+                    transition: isInteractingRef.current ? 'none' : 'transform 0.1s ease-out',
                     transformOrigin: 'center center',
                   }}
                   className="flex items-center justify-center max-w-full max-h-full pointer-events-none"
