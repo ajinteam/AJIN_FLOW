@@ -65,6 +65,24 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const resetAllFields = () => {
+    setStagedFiles([]);
+    setError('');
+    setIsBundleAlbum(true);
+    setAlbumTitle('');
+    setIsMergePdf(true);
+    setMergedPdfTitle('');
+    setPdfOverwriteTarget('new');
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleModalClose = () => {
+    resetAllFields();
+    onClose();
+  };
+
   React.useEffect(() => {
     if (defaultProjectId) {
       setSelectedProjectId(defaultProjectId);
@@ -74,18 +92,24 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   }, [defaultProjectId, projects]);
 
   React.useEffect(() => {
+    if (isOpen) {
+      resetAllFields();
+    }
+  }, [isOpen]);
+
+  React.useEffect(() => {
     if (!isOpen) return;
 
     window.history.pushState({ modal: 'upload' }, '');
     const handlePopState = () => {
-      onClose();
+      handleModalClose();
     };
 
     window.addEventListener('popstate', handlePopState);
     return () => {
       window.removeEventListener('popstate', handlePopState);
     };
-  }, [isOpen, onClose]);
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -240,7 +264,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleModalClose}
             disabled={isUploading}
             className="p-1.5 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors disabled:opacity-50"
           >
@@ -599,7 +623,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleModalClose}
               disabled={isUploading}
               className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs md:text-sm font-medium transition-colors"
             >

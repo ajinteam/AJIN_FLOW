@@ -1215,21 +1215,23 @@ export const InfoView: React.FC<InfoViewProps> = ({
         onSave={handleSaveProject}
       />
 
-      <UploadModal
-        isOpen={isUploadModalOpen}
-        projects={projects}
-        files={files}
-        defaultProjectId={targetUploadProjectId}
-        onClose={() => {
-          setIsUploadModalOpen(false);
-          setTargetUploadProjectId(undefined);
-        }}
-        onUploadComplete={handleUploadFiles}
-        onCreateNewProjectRequested={() => {
-          setEditingProject(null);
-          setIsProjectModalOpen(true);
-        }}
-      />
+      {isUploadModalOpen && (
+        <UploadModal
+          isOpen={isUploadModalOpen}
+          projects={projects}
+          files={files}
+          defaultProjectId={targetUploadProjectId}
+          onClose={() => {
+            setIsUploadModalOpen(false);
+            setTargetUploadProjectId(undefined);
+          }}
+          onUploadComplete={handleUploadFiles}
+          onCreateNewProjectRequested={() => {
+            setEditingProject(null);
+            setIsProjectModalOpen(true);
+          }}
+        />
+      )}
     </div>
   );
 };
