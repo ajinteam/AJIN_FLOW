@@ -249,7 +249,6 @@ export const RsPartStandaloneViewer: React.FC<RsPartStandaloneViewerProps> = ({
 
   const handleCloseWindow = () => {
     window.close();
-    // If browser prevents window.close() on non-script-opened tabs, navigate back cleanly
     setTimeout(() => {
       if (!window.closed) {
         onBackToList();
@@ -259,24 +258,24 @@ export const RsPartStandaloneViewer: React.FC<RsPartStandaloneViewerProps> = ({
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center gap-3">
-        <Loader2 className="w-8 h-8 animate-spin text-sky-400" />
-        <p className="text-sm text-slate-400">RS Parts 파일을 불러오는 중입니다...</p>
+      <div className="min-h-screen bg-[#eaf1ed] text-slate-800 flex flex-col items-center justify-center gap-3">
+        <Loader2 className="w-8 h-8 animate-spin text-teal-700" />
+        <p className="text-sm text-slate-600">RS Parts 파일을 불러오는 중입니다...</p>
       </div>
     );
   }
 
   if (!file) {
     return (
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-6 text-center gap-4">
-        <AlertCircle className="w-12 h-12 text-amber-400" />
+      <div className="min-h-screen bg-[#eaf1ed] text-slate-800 flex flex-col items-center justify-center p-6 text-center gap-4">
+        <AlertCircle className="w-12 h-12 text-amber-600" />
         <h2 className="text-lg font-bold">파일을 찾을 수 없습니다</h2>
-        <p className="text-sm text-slate-400 max-w-md">
+        <p className="text-sm text-slate-600 max-w-md">
           요청하신 RS Parts 파일이 삭제되었거나 존재하지 않습니다.
         </p>
         <button
           onClick={handleCloseWindow}
-          className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-colors"
+          className="px-4 min-h-[44px] rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-sm font-semibold transition-colors"
         >
           RS Parts 목록으로 이동
         </button>
@@ -296,21 +295,21 @@ export const RsPartStandaloneViewer: React.FC<RsPartStandaloneViewerProps> = ({
     : [];
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col print:bg-white print:text-black">
+    <div className="min-h-screen bg-[#eaf1ed] text-slate-800 flex flex-col print:bg-white print:text-black">
       {/* Top Toolbar (Hidden during Print) */}
-      <header className="sticky top-0 z-30 bg-slate-900 border-b border-slate-800 px-3 sm:px-6 py-2.5 flex flex-wrap items-center justify-between gap-2 print:hidden">
+      <header className="sticky top-0 z-30 bg-[#f8fbf9] border-b border-[#d4e1d9] px-3 sm:px-6 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 print:hidden shadow-xs">
         <div className="flex items-center gap-3 min-w-0 flex-1">
-          <div className="p-2 rounded-lg bg-slate-800 border border-slate-700 shrink-0">
-            {file.fileType === 'pdf' && <FileText className="w-5 h-5 text-red-400" />}
-            {file.fileType === 'excel' && <FileSpreadsheet className="w-5 h-5 text-emerald-400" />}
-            {file.fileType === 'image' && <ImageIcon className="w-5 h-5 text-sky-400" />}
-            {file.fileType === 'other' && <FileText className="w-5 h-5 text-slate-400" />}
+          <div className="p-2 rounded-xl bg-[#eaf1ed] border border-[#cfddd4] shrink-0">
+            {file.fileType === 'pdf' && <FileText className="w-5 h-5 text-rose-600" />}
+            {file.fileType === 'excel' && <FileSpreadsheet className="w-5 h-5 text-emerald-700" />}
+            {file.fileType === 'image' && <ImageIcon className="w-5 h-5 text-teal-700" />}
+            {file.fileType === 'other' && <FileText className="w-5 h-5 text-slate-600" />}
           </div>
-          <div className="min-w-0">
-            <h1 className="text-sm sm:text-base font-bold text-slate-100 truncate">
+          <div className="min-w-0 flex-1">
+            <h1 className="text-sm sm:text-base font-bold text-slate-900 truncate">
               {file.fileName}
             </h1>
-            <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-400 tabular-nums">
+            <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-600 tabular-nums">
               <span>{formatFileSize(file.fileSize)}</span>
               <span aria-hidden="true">·</span>
               <span>
@@ -323,7 +322,7 @@ export const RsPartStandaloneViewer: React.FC<RsPartStandaloneViewerProps> = ({
               {numPages > 0 && (
                 <>
                   <span aria-hidden="true">·</span>
-                  <span className="text-sky-400 font-medium">{numPages}페이지</span>
+                  <span className="text-teal-800 font-semibold">{numPages}페이지</span>
                 </>
               )}
             </div>
@@ -331,24 +330,24 @@ export const RsPartStandaloneViewer: React.FC<RsPartStandaloneViewerProps> = ({
         </div>
 
         {/* Zoom / Rotate / Print / Download / Close */}
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex flex-wrap items-center gap-1.5 shrink-0 justify-end">
           {(file.fileType === 'pdf' || file.fileType === 'image') && (
-            <div className="flex items-center gap-1 bg-slate-800 border border-slate-700 rounded-xl p-1 mr-1">
+            <div className="flex items-center gap-1 bg-white border border-[#cfddd4] rounded-xl p-1">
               <button
                 type="button"
                 onClick={() => setZoom((z) => Math.max(0.5, Number((z - 0.2).toFixed(2))))}
-                className="p-1.5 rounded-lg text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                className="p-2 sm:p-1.5 rounded-lg text-slate-700 hover:bg-[#eaf1ed] transition-colors"
                 title="축소"
               >
                 <ZoomOut className="w-4 h-4" />
               </button>
-              <span className="text-xs font-mono text-slate-200 min-w-[3.2rem] text-center tabular-nums">
+              <span className="text-xs font-mono text-slate-700 min-w-[3rem] text-center tabular-nums">
                 {Math.round(zoom * 100)}%
               </span>
               <button
                 type="button"
                 onClick={() => setZoom((z) => Math.min(3.0, Number((z + 0.2).toFixed(2))))}
-                className="p-1.5 rounded-lg text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                className="p-2 sm:p-1.5 rounded-lg text-slate-700 hover:bg-[#eaf1ed] transition-colors"
                 title="확대"
               >
                 <ZoomIn className="w-4 h-4" />
@@ -356,7 +355,7 @@ export const RsPartStandaloneViewer: React.FC<RsPartStandaloneViewerProps> = ({
               <button
                 type="button"
                 onClick={() => setRotation((r) => (r + 90) % 360)}
-                className="p-1.5 rounded-lg text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+                className="p-2 sm:p-1.5 rounded-lg text-slate-700 hover:bg-[#eaf1ed] transition-colors"
                 title="회전"
               >
                 <RotateCw className="w-4 h-4" />
@@ -367,7 +366,7 @@ export const RsPartStandaloneViewer: React.FC<RsPartStandaloneViewerProps> = ({
           <button
             type="button"
             onClick={handlePrint}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs sm:text-sm font-semibold transition-colors whitespace-nowrap shrink-0"
+            className="inline-flex items-center justify-center gap-1.5 px-3.5 min-h-[42px] sm:min-h-[38px] rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs sm:text-sm font-semibold transition-colors whitespace-nowrap shrink-0"
           >
             <Printer className="w-4 h-4" />
             <span>인쇄</span>
@@ -377,7 +376,7 @@ export const RsPartStandaloneViewer: React.FC<RsPartStandaloneViewerProps> = ({
             type="button"
             onClick={handleDownload}
             disabled={downloading}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs sm:text-sm font-semibold transition-colors whitespace-nowrap shrink-0 disabled:opacity-60"
+            className="inline-flex items-center justify-center gap-1.5 px-3.5 min-h-[42px] sm:min-h-[38px] rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs sm:text-sm font-semibold transition-colors whitespace-nowrap shrink-0 disabled:opacity-60"
           >
             <Download className="w-4 h-4" />
             <span>{downloading ? '준비 중...' : '다운로드'}</span>
@@ -386,7 +385,7 @@ export const RsPartStandaloneViewer: React.FC<RsPartStandaloneViewerProps> = ({
           <button
             type="button"
             onClick={handleCloseWindow}
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition-colors"
+            className="p-2.5 sm:p-2 rounded-xl bg-white hover:bg-slate-100 text-slate-600 hover:text-slate-900 border border-[#cfddd4] transition-colors"
             title="창 닫기"
           >
             <X className="w-4 h-4" />
@@ -395,21 +394,21 @@ export const RsPartStandaloneViewer: React.FC<RsPartStandaloneViewerProps> = ({
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 overflow-auto p-3 sm:p-6 print:p-0 print:overflow-visible">
+      <main className="flex-1 overflow-auto p-2.5 sm:p-6 print:p-0 print:overflow-visible">
         {/* 1. PDF Multi-Page Canvas Viewer */}
         {file.fileType === 'pdf' && (
           <div className="w-full flex flex-col items-center gap-4 print:gap-0 print:block">
             {pdfLoading && (
-              <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-3 print:hidden">
-                <Loader2 className="w-8 h-8 animate-spin text-sky-400" />
+              <div className="flex flex-col items-center justify-center py-20 text-slate-600 gap-3 print:hidden">
+                <Loader2 className="w-8 h-8 animate-spin text-teal-700" />
                 <span className="text-sm">PDF 도면을 불러오는 중입니다...</span>
               </div>
             )}
 
             {pdfError && (
-              <div className="w-full max-w-5xl bg-slate-900 border border-slate-800 rounded-xl overflow-hidden print:border-0">
-                <div className="p-3 bg-slate-800 flex items-center justify-between text-xs border-b border-slate-700 print:hidden">
-                  <span className="text-amber-400 flex items-center gap-1.5">
+              <div className="w-full max-w-5xl bg-white border border-[#d4e1d9] rounded-xl overflow-hidden print:border-0">
+                <div className="p-3 bg-[#f8fbf9] flex items-center justify-between text-xs border-b border-[#d4e1d9] print:hidden">
+                  <span className="text-amber-700 flex items-center gap-1.5 font-medium">
                     <AlertCircle className="w-4 h-4" />
                     브라우저 내장 뷰어로 표시합니다
                   </span>
@@ -417,7 +416,7 @@ export const RsPartStandaloneViewer: React.FC<RsPartStandaloneViewerProps> = ({
                     href={file.fileUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="px-3 py-1 bg-sky-600 hover:bg-sky-500 text-white rounded-lg font-medium"
+                    className="px-3 py-1.5 bg-teal-700 hover:bg-teal-800 text-white rounded-lg font-medium"
                   >
                     원본 PDF 직접 열기
                   </a>
@@ -431,15 +430,15 @@ export const RsPartStandaloneViewer: React.FC<RsPartStandaloneViewerProps> = ({
             )}
 
             {!pdfLoading && !pdfError && numPages > 0 && (
-              <div className="flex flex-col items-center gap-5 print:gap-0 print:block w-full">
+              <div className="flex flex-col items-center gap-4 sm:gap-5 print:gap-0 print:block w-full">
                 {Array.from({ length: numPages }, (_, idx) => (
                   <div
                     key={idx}
-                    className="rs-print-page bg-white rounded-lg shadow-2xl border border-slate-700 overflow-hidden max-w-full"
+                    className="rs-print-page bg-white rounded-lg shadow-md border border-[#cddbd3] overflow-hidden max-w-full"
                   >
-                    <div className="px-3 py-1 bg-slate-800 text-[11px] font-mono text-slate-300 border-b border-slate-700 flex items-center justify-between print:hidden">
+                    <div className="px-3 py-1.5 bg-[#f4f8f5] text-[11px] font-mono text-slate-600 border-b border-[#dde8e1] flex items-center justify-between print:hidden">
                       <span>페이지 {idx + 1} / {numPages}</span>
-                      <span className="truncate max-w-[260px] text-slate-400">{file.fileName}</span>
+                      <span className="truncate max-w-[260px] text-slate-500">{file.fileName}</span>
                     </div>
                     <div className="overflow-auto max-w-full print:overflow-visible">
                       <canvas
@@ -458,7 +457,7 @@ export const RsPartStandaloneViewer: React.FC<RsPartStandaloneViewerProps> = ({
 
         {/* 2. Image Viewer */}
         {file.fileType === 'image' && (
-          <div className="w-full flex items-center justify-center min-h-[75vh] print:min-h-0">
+          <div className="w-full flex items-center justify-center min-h-[75vh] print:min-h-0 overflow-auto">
             <img
               src={file.fileUrl}
               alt={file.fileName}
@@ -467,55 +466,55 @@ export const RsPartStandaloneViewer: React.FC<RsPartStandaloneViewerProps> = ({
                 maxWidth: 'none',
                 transform: rotation !== 0 ? `rotate(${rotation}deg)` : undefined,
               }}
-              className="object-contain rounded-lg shadow-2xl border border-slate-800 print:w-full print:max-w-full print:shadow-none print:border-0"
+              className="object-contain rounded-lg shadow-lg border border-[#cddbd3] bg-white print:w-full print:max-w-full print:shadow-none print:border-0"
             />
           </div>
         )}
 
         {/* 3. Excel Viewer */}
         {file.fileType === 'excel' && (
-          <div className="max-w-6xl mx-auto flex flex-col gap-3">
-            <div className="p-3 bg-slate-900 border border-slate-800 rounded-xl flex flex-wrap items-center justify-between gap-2 print:hidden">
+          <div className="w-full flex flex-col gap-3">
+            <div className="p-3 bg-[#f8fbf9] border border-[#d4e1d9] rounded-xl flex flex-wrap items-center justify-between gap-2 print:hidden">
               <div className="flex items-center gap-1.5 overflow-x-auto">
                 {excelSheets.map((sheet, idx) => (
                   <button
                     key={sheet.name}
                     onClick={() => setActiveSheetIndex(idx)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
+                    className={`px-3 py-2 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
                       activeSheetIndex === idx
-                        ? 'bg-emerald-600 text-white'
-                        : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                        ? 'bg-teal-700 text-white'
+                        : 'bg-white text-slate-700 border border-[#d4e1d9] hover:bg-[#eef4f0]'
                     }`}
                   >
                     {sheet.name}
                   </button>
                 ))}
               </div>
-              <div className="relative w-full sm:w-64">
-                <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <div className="relative w-full sm:w-72">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
                   type="text"
                   value={excelSearch}
                   onChange={(e) => setExcelSearch(e.target.value)}
                   placeholder="표 내용 검색..."
-                  className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-slate-100 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500 placeholder-slate-500"
+                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-white border border-[#c9d8cf] text-slate-900 text-base sm:text-xs focus:outline-none focus:ring-2 focus:ring-teal-600 placeholder-slate-400"
                 />
               </div>
             </div>
 
             {excelLoading && (
-              <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-2">
-                <Loader2 className="w-8 h-8 animate-spin text-emerald-400" />
+              <div className="flex flex-col items-center justify-center py-20 text-slate-600 gap-2">
+                <Loader2 className="w-8 h-8 animate-spin text-teal-700" />
                 <span className="text-sm">엑셀 데이터를 불러오는 중입니다...</span>
               </div>
             )}
 
             {excelError && (
-              <div className="p-8 text-center text-rose-400 bg-slate-900 border border-slate-800 rounded-xl">
+              <div className="p-8 text-center text-rose-700 bg-white border border-rose-200 rounded-xl">
                 <p className="text-sm mb-3">{excelError}</p>
                 <button
                   onClick={handleDownload}
-                  className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold inline-flex items-center gap-1.5"
+                  className="px-4 py-2 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold inline-flex items-center gap-1.5"
                 >
                   <Download className="w-4 h-4" />
                   원본 엑셀 다운로드
@@ -524,18 +523,18 @@ export const RsPartStandaloneViewer: React.FC<RsPartStandaloneViewerProps> = ({
             )}
 
             {!excelLoading && !excelError && currentSheet && (
-              <div className="border border-slate-800 rounded-xl overflow-x-auto bg-slate-900 print:bg-white print:border-slate-300">
+              <div className="border border-[#d4e1d9] rounded-xl overflow-x-auto bg-white print:border-slate-300">
                 <table className="w-full text-left border-collapse text-xs tabular-nums">
                   <thead>
                     {filteredRows[0] && (
-                      <tr className="bg-slate-800 border-b border-slate-700 print:bg-slate-100 print:border-slate-300">
-                        <th className="py-2.5 px-3 font-semibold text-slate-400 border-r border-slate-700 w-10 text-center print:text-black print:border-slate-300">
+                      <tr className="bg-[#f0f6f2] border-b border-[#d4e1d9] print:bg-slate-100 print:border-slate-300">
+                        <th className="py-2.5 px-3 font-semibold text-slate-600 border-r border-[#d4e1d9] w-10 text-center print:text-black print:border-slate-300">
                           #
                         </th>
                         {filteredRows[0].map((h: any, cIdx: number) => (
                           <th
                             key={cIdx}
-                            className="py-2.5 px-3 font-semibold text-emerald-400 border-r border-slate-700 whitespace-nowrap print:text-black print:border-slate-300"
+                            className="py-2.5 px-3 font-semibold text-teal-900 border-r border-[#d4e1d9] whitespace-nowrap print:text-black print:border-slate-300"
                           >
                             {h !== '' && h !== null && h !== undefined ? String(h) : `열 ${cIdx + 1}`}
                           </th>
@@ -543,16 +542,16 @@ export const RsPartStandaloneViewer: React.FC<RsPartStandaloneViewerProps> = ({
                       </tr>
                     )}
                   </thead>
-                  <tbody className="divide-y divide-slate-800 print:divide-slate-300">
+                  <tbody className="divide-y divide-[#e3ece7] print:divide-slate-300">
                     {filteredRows.slice(1).map((row, rIdx) => (
-                      <tr key={rIdx} className="hover:bg-slate-800/50 print:hover:bg-transparent">
-                        <td className="py-2 px-3 text-slate-500 border-r border-slate-800 text-center font-mono print:text-black print:border-slate-300">
+                      <tr key={rIdx} className="hover:bg-[#f7faf8] print:hover:bg-transparent">
+                        <td className="py-2 px-3 text-slate-500 border-r border-[#e3ece7] text-center font-mono print:text-black print:border-slate-300">
                           {rIdx + 1}
                         </td>
                         {row.map((cell: any, cIdx: number) => (
                           <td
                             key={cIdx}
-                            className="py-2 px-3 text-slate-200 border-r border-slate-800 whitespace-nowrap print:text-black print:border-slate-300"
+                            className="py-2 px-3 text-slate-800 border-r border-[#e3ece7] whitespace-nowrap print:text-black print:border-slate-300"
                           >
                             {cell !== '' && cell !== null && cell !== undefined ? String(cell) : '-'}
                           </td>
@@ -570,13 +569,13 @@ export const RsPartStandaloneViewer: React.FC<RsPartStandaloneViewerProps> = ({
         {file.fileType === 'other' && (
           <div className="min-h-[60vh] flex flex-col items-center justify-center text-center gap-4">
             <FileText className="w-16 h-16 text-slate-500" />
-            <h2 className="text-base font-semibold">{file.fileName}</h2>
-            <p className="text-xs text-slate-400">
+            <h2 className="text-base font-semibold text-slate-800">{file.fileName}</h2>
+            <p className="text-xs text-slate-600">
               미리보기를 지원하지 않는 파일 형식입니다. 다운로드하여 확인해 주세요.
             </p>
             <button
               onClick={handleDownload}
-              className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold inline-flex items-center gap-2"
+              className="px-4 min-h-[44px] rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-sm font-semibold inline-flex items-center gap-2"
             >
               <Download className="w-4 h-4" />
               파일 다운로드
