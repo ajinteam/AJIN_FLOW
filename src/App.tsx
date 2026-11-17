@@ -11,6 +11,7 @@ import {
   ProcessPart,
   InfoProject,
   InfoFile,
+  RsPartFile,
 } from './types';
 import { format, parseISO, isValid } from 'date-fns';
 import {
@@ -30,13 +31,16 @@ import {
   FileText,
   ShieldAlert,
   ArrowRightLeft,
+  FolderSearch,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { InfoView } from './components/InfoView';
+import { RsPartsView } from './components/RsPartsView';
+import { RsPartStandaloneViewer } from './components/RsPartStandaloneViewer';
 import { UserManagementModal } from './components/UserManagementModal';
-import { fetchInfoData, saveInfoData } from './lib/api';
+import { fetchInfoData, saveInfoData, fetchRsPartsData, saveRsPartsData } from './lib/api';
 import * as Processes from './processes';
 
 function safeFormatDate(val: any, formatStr: string = 'yyyy-MM-dd', fallback: string = ''): string {
@@ -212,11 +216,20 @@ export default function App() {
   );
 
   // App starts directly in 'info' mode! (Requirement #3)
-  const [currentView, setCurrentView] = useState<'info' | 'flow'>('info');
+  const [currentView, setCurrentView] = useState<'info' | 'rs-parts' | 'flow'>('info');
+  const [rsViewFileId, setRsViewFileId] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      return new URLSearchParams(window.location.search).get('rsView');
+    }
+    return null;
+  });
 
   // Info Data State (Upstash key: ajin-info-files26)
   const [infoProjects, setInfoProjects] = useState<InfoProject[]>([]);
   const [infoFiles, setInfoFiles] = useState<InfoFile[]>([]);
+
+  // RS Parts Data State (Upstash key: ajin-rs-parts26)
+  const [rsFiles, setRsFiles] = useState<RsPartFile[]>([]);
 
   // Flow Data State (Upstash key: ajin_flow26_Backup)
   const [flowData, setFlowData] = useState({
@@ -342,14 +355,24 @@ export default function App() {
     }
   }, []);
 
+  // Load RS Parts Data (ajin-rs-parts26)
+  const loadRsPartsData = useCallback(async () => {
+    try {
+      const loadedRsFiles = await fetchRsPartsData();
+      setRsFiles(loadedRsFiles);
+    } catch (e) {
+      console.error('Failed to load RS Parts data:', e);
+    }
+  }, []);
+
   useEffect(() => {
     async function init() {
       setLoading(true);
-      await Promise.all([loadInfoData(), loadFlowData()]);
+      await Promise.all([loadInfoData(), loadFlowData(), loadRsPartsData()]);
       setLoading(false);
     }
     init();
-  }, [loadInfoData, loadFlowData]);
+  }, [loadInfoData, loadFlowData, loadRsPartsData]);
 
   // Mobile Back Button Management (Requirement #4)
   useEffect(() => {
@@ -387,9 +410,11 @@ export default function App() {
         setShowFlowCompleted(false);
         return;
       }
-      // Priority 2: If on Flow view, return to Home (Info view)
-      if (currentView === 'flow') {
-        setCurrentView('info');
+      // Priority 2: If on Flow or RS Parts view, return to Home (Info view if allowed)
+      if (currentView === 'flow' || currentView === 'rs-parts') {
+        if (canAccessInfo) {
+          setCurrentView('info');
+        }
         return;
       }
       // If at home (Info view) with no modals, allow standard back action (exit app)
@@ -450,6 +475,11 @@ export default function App() {
     saveInfoData({ projects: infoProjects, files: newFiles });
   };
 
+  const handleUpdateRsFiles = (newFiles: RsPartFile[]) => {
+    setRsFiles(newFiles);
+    saveRsPartsData(newFiles);
+  };
+
   // User details & permission calculation
   const currentUser = useMemo(() => {
     if (!userInitials) return null;
@@ -475,16 +505,16 @@ export default function App() {
     userInitials === 'J-SUNG' ||
     Boolean(currentUser?.canManageInfo);
 
-  // If user only has permission for flow, auto-switch
+  // If user only has permission for flow or rs-parts, auto-switch from info
   useEffect(() => {
-    if (userInitials) {
-      if (!canAccessInfo && canAccessFlow) {
+    if (userInitials && currentView === 'info' && !canAccessInfo) {
+      if (canAccessFlow) {
         setCurrentView('flow');
-      } else if (canAccessInfo && !canAccessFlow) {
-        setCurrentView('info');
+      } else {
+        setCurrentView('rs-parts');
       }
     }
-  }, [userInitials, canAccessInfo, canAccessFlow]);
+  }, [userInitials, canAccessInfo, canAccessFlow, currentView]);
 
   const handleLogin = (initials: string, pass: string, userObj?: UserConfig) => {
     setUserInitials(initials);
@@ -1002,6 +1032,22 @@ export default function App() {
     return <Auth users={flowData.users} onLogin={handleLogin} />;
   }
 
+  // Dedicated standalone new-window viewer for RS Parts (authenticated users only)
+  if (rsViewFileId) {
+    const targetRsFile = rsFiles.find((f) => f.id === rsViewFileId) || null;
+    return (
+      <RsPartStandaloneViewer
+        file={targetRsFile}
+        loading={loading}
+        onBackToList={() => {
+          window.history.replaceState({}, '', window.location.pathname);
+          setRsViewFileId(null);
+          setCurrentView('rs-parts');
+        }}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#f1f5f9] text-slate-800 flex flex-col font-sans selection:bg-blue-500 selection:text-white w-full max-w-full overflow-x-hidden">
       {/* Top Bar matching screenshot */}
@@ -1019,7 +1065,7 @@ export default function App() {
                 if (canAccessInfo) setCurrentView('info');
                 else alert('INFO 열람 권한이 없습니다. 관리자에게 문의하세요.');
               }}
-              className={`flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all whitespace-nowrap border ${
+              className={`flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all whitespace-nowrap shrink-0 border ${
                 currentView === 'info'
                   ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
                   : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
@@ -1027,6 +1073,22 @@ export default function App() {
             >
               <FileText className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
               <span>Info</span>
+            </button>
+
+            {/* RS Parts Tab (Placed right next to Info, accessible to all logged-in users) */}
+            <button
+              onClick={() => {
+                window.history.pushState({ view: 'rs-parts' }, '');
+                setCurrentView('rs-parts');
+              }}
+              className={`flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all whitespace-nowrap shrink-0 border ${
+                currentView === 'rs-parts'
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                  : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <FolderSearch className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              <span>RS Parts</span>
             </button>
 
             {/* Flow Tab */}
@@ -1039,7 +1101,7 @@ export default function App() {
                   alert('FLOW 공정 접근 권한이 없습니다. 관리자에게 문의하세요.');
                 }
               }}
-              className={`flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all whitespace-nowrap border ${
+              className={`flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-bold transition-all whitespace-nowrap shrink-0 border ${
                 currentView === 'flow'
                   ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
                   : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
@@ -1097,7 +1159,7 @@ export default function App() {
             <button
               onClick={() => {
                 setLoading(true);
-                Promise.all([loadInfoData(), loadFlowData()]).finally(() => setLoading(false));
+                Promise.all([loadInfoData(), loadFlowData(), loadRsPartsData()]).finally(() => setLoading(false));
               }}
               className="p-2 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-600 transition-colors"
               title="새로고침"
@@ -1129,6 +1191,17 @@ export default function App() {
             onUpdateProjects={handleUpdateInfoProjects}
             onUpdateFiles={handleUpdateInfoFiles}
             onUpdateInfoData={handleUpdateInfoData}
+          />
+        )}
+
+        {/* 2. RS PARTS VIEW */}
+        {currentView === 'rs-parts' && (
+          <RsPartsView
+            files={rsFiles}
+            currentUserInitials={currentUser?.initials || (userInitials === '5200' ? 'J-SUNG' : userInitials)}
+            canManage={canManageInfo}
+            onUpdateFiles={handleUpdateRsFiles}
+            onRefresh={loadRsPartsData}
           />
         )}
 

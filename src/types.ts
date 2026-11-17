@@ -17,9 +17,25 @@ export interface User {
   name: string;
 }
 
-export type InfoFolderType = 'info-pdf' | 'info-excel' | 'info-image';
+export type InfoFolderType = 'info-pdf' | 'info-excel' | 'info-image' | 'RS-pdf';
 export type InfoFileType = 'pdf' | 'excel' | 'image' | 'other';
 export type InfoProjectStatus = 'active' | 'completed' | 'trash';
+
+export interface RsPartFile {
+  id: string;
+  fileName: string;       // 원본 파일명 (예: "HO-26.pdf")
+  baseName: string;       // 확장자 제외 파일명 (예: "HO-26")
+  fileType: InfoFileType; // 'pdf' | 'excel' | 'image' | 'other'
+  folder: 'RS-pdf';       // Cloudflare R2 전용 폴더
+  storagePath: string;    // R2 키 (예: "RS-pdf/172400000_HO-26.pdf")
+  fileUrl: string;        // 열람/다운로드 URL
+  fileSize: number;       // byte size
+  mimeType: string;
+  uploadedBy: string;     // 업로더 이니셜
+  uploadedAt: string;
+  updatedAt: string;
+  version?: number;
+}
 
 export interface InfoProject {
   id: string;

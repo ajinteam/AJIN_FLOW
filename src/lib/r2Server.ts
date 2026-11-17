@@ -51,7 +51,7 @@ if (isR2Configured) {
 }
 
 export async function uploadToR2(
-  folder: 'info-pdf' | 'info-excel' | 'info-image',
+  folder: 'info-pdf' | 'info-excel' | 'info-image' | 'RS-pdf',
   fileName: string,
   buffer: Buffer,
   contentType: string

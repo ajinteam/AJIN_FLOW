@@ -1,8 +1,9 @@
-import { InfoDataState, InfoFile, InfoFolderType, InfoProject } from '../types';
+import { InfoDataState, InfoFile, InfoFolderType, InfoProject, RsPartFile } from '../types';
 import { compressImage, formatFileSize } from './imageCompressor';
 import * as XLSX from 'xlsx';
 
 const LOCAL_STORAGE_INFO_KEY = 'ajin_info_data_local_v2';
+const LOCAL_STORAGE_RS_PARTS_KEY = 'ajin_rs_parts_local_v1';
 const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
 
 export async function fetchInfoData(): Promise<InfoDataState> {
@@ -107,7 +108,7 @@ export async function deleteFileFromServer(folder: string, fileName: string, sto
 
 export function detectFileTypeAndFolder(file: File): {
   fileType: 'pdf' | 'excel' | 'image' | 'other';
-  folder: InfoFolderType;
+  folder: 'info-pdf' | 'info-excel' | 'info-image';
 } {
   const name = file.name.toLowerCase();
   const type = file.type.toLowerCase();
@@ -514,5 +515,206 @@ export async function uploadImageAlbum(
   };
 
   return albumRecord;
+}
+
+export function getBaseFileName(fileName: string): string {
+  return (fileName || '').replace(/\.[^/.]+$/, '').trim();
+}
+
+export async function fetchRsPartsData(): Promise<RsPartFile[]> {
+  try {
+    const res = await fetch('/api/rs-parts');
+    if (res.ok) {
+      const data = await res.json();
+      const files: RsPartFile[] = Array.isArray(data?.files) ? data.files : [];
+      localStorage.setItem(LOCAL_STORAGE_RS_PARTS_KEY, JSON.stringify(files));
+      return files;
+    }
+  } catch (err) {
+    console.warn('Failed to fetch from /api/rs-parts, falling back to localStorage', err);
+  }
+
+  const cached = localStorage.getItem(LOCAL_STORAGE_RS_PARTS_KEY);
+  if (cached) {
+    try {
+      const parsed = JSON.parse(cached);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      // ignore
+    }
+  }
+
+  return [];
+}
+
+export async function saveRsPartsData(files: RsPartFile[]): Promise<boolean> {
+  localStorage.setItem(LOCAL_STORAGE_RS_PARTS_KEY, JSON.stringify(files));
+
+  try {
+    const res = await fetch('/api/rs-parts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ files }),
+    });
+    return res.ok;
+  } catch (err) {
+    console.error('Failed to sync RS Parts data to server:', err);
+    return false;
+  }
+}
+
+export async function syncRsPartsFromR2(): Promise<{
+  success: boolean;
+  configured: boolean;
+  count: number;
+  objects: Array<{
+    key: string;
+    folder: string;
+    fileName: string;
+    size: number;
+    lastModified?: string;
+    url: string;
+    fileType: 'pdf' | 'excel' | 'image' | 'other';
+  }>;
+}> {
+  try {
+    const res = await fetch('/api/sync-r2?scope=rs-parts');
+    if (!res.ok) throw new Error('Failed to fetch RS-pdf R2 files');
+    return await res.json();
+  } catch (err) {
+    console.error('RS Parts R2 sync fetch error:', err);
+    return { success: false, configured: false, count: 0, objects: [] };
+  }
+}
+
+export async function uploadRsPartFile(
+  file: File,
+  uploadedBy: string,
+  onProgress?: (percent: number) => void
+): Promise<RsPartFile> {
+  const folder = 'RS-pdf' as const;
+  const { fileType } = detectFileTypeAndFolder(file);
+  let processedFile = file;
+  let dataUrl = '';
+
+  if (fileType === 'image' && file.size > 1.5 * 1024 * 1024) {
+    try {
+      const compResult = await compressImage(file, 1920, 0.85);
+      processedFile = compResult.file;
+      dataUrl = compResult.dataUrl;
+    } catch (e) {
+      console.warn('RS Parts image compression fallback:', e);
+    }
+  }
+
+  let serverStoragePath = `${folder}/${Date.now()}_${file.name}`;
+  let fileUrl = '';
+  let r2Uploaded = false;
+
+  // 1. Direct Presigned Upload to R2 RS-pdf folder
+  try {
+    const presignRes = await fetch('/api/presign', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fileName: file.name,
+        folder,
+        contentType: processedFile.type || 'application/octet-stream',
+        fileSize: processedFile.size,
+      }),
+    });
+
+    if (presignRes.ok) {
+      const presignData = await presignRes.json();
+      if (presignData.isDirectR2 && presignData.presignedUrl) {
+        const uploadRes = await fetch(presignData.presignedUrl, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': processedFile.type || 'application/octet-stream',
+          },
+          body: processedFile,
+        });
+
+        if (uploadRes.ok) {
+          r2Uploaded = true;
+          serverStoragePath = presignData.storagePath;
+          fileUrl = presignData.fileUrl;
+        }
+      }
+    }
+  } catch (presignErr) {
+    console.warn('[RS-pdf Presign] failed, trying chunked/standard upload:', presignErr);
+  }
+
+  // 2. Chunked Multipart Upload for large files (> 2MB)
+  if (!r2Uploaded && processedFile.size > 2 * 1024 * 1024) {
+    const chunkResult = await uploadFileInChunks(processedFile, folder, onProgress);
+    if (chunkResult) {
+      r2Uploaded = true;
+      serverStoragePath = chunkResult.storagePath;
+      fileUrl = chunkResult.fileUrl;
+    }
+  }
+
+  // 3. Standard Base64 upload for smaller files
+  if (!r2Uploaded) {
+    if (!dataUrl && processedFile.size < 4 * 1024 * 1024) {
+      try {
+        dataUrl = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(processedFile);
+        });
+      } catch (e) {
+        console.warn('RS Parts FileReader failed:', e);
+      }
+    }
+
+    if (dataUrl) {
+      try {
+        const res = await fetch('/api/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fileName: `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`,
+            folder,
+            base64Data: dataUrl,
+            contentType: processedFile.type || 'application/octet-stream',
+          }),
+        });
+
+        if (res.ok) {
+          const json = await res.json();
+          serverStoragePath = json.storagePath || serverStoragePath;
+          fileUrl = json.fileUrl || fileUrl;
+          r2Uploaded = true;
+        }
+      } catch (err) {
+        console.warn('RS Parts server upload error, using local fallback:', err);
+      }
+    }
+
+    if (!fileUrl) {
+      fileUrl = dataUrl || URL.createObjectURL(processedFile);
+    }
+  }
+
+  const now = new Date().toISOString();
+  return {
+    id: `rs_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+    fileName: file.name,
+    baseName: getBaseFileName(file.name),
+    fileType,
+    folder,
+    storagePath: serverStoragePath,
+    fileUrl,
+    fileSize: processedFile.size,
+    mimeType: processedFile.type || 'application/octet-stream',
+    uploadedBy,
+    uploadedAt: now,
+    updatedAt: now,
+    version: 1,
+  };
 }
 

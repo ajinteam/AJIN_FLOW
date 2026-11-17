@@ -18,3 +18,31 @@ body {
   -ms-overflow-style: none;  /* IE and Edge */
   scrollbar-width: none;  /* Firefox */
 }
+
+@media print {
+  html, body {
+    height: auto !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  .rs-print-page {
+    break-after: page;
+    page-break-after: always;
+    box-shadow: none !important;
+    border: none !important;
+    margin: 0 auto !important;
+  }
+
+  .rs-print-page:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+
+  .rs-print-page canvas {
+    max-width: 100% !important;
+    width: 100% !important;
+    height: auto !important;
+  }
+}

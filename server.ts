@@ -12,10 +12,11 @@ const __dirname = path.dirname(__filename);
 
 const FLOW_REDIS_KEY = "ajin_flow26_Backup";
 const INFO_REDIS_KEY = "ajin-info-files26";
+const RS_PARTS_REDIS_KEY = "ajin-rs-parts26";
 
 // Ensure local upload folders exist as fallback
 const UPLOADS_BASE = path.join(process.cwd(), "uploads");
-const FOLDERS = ["info-pdf", "info-excel", "info-image"];
+const FOLDERS = ["info-pdf", "info-excel", "info-image", "RS-pdf"];
 
 for (const folder of FOLDERS) {
   const dir = path.join(UPLOADS_BASE, folder);
@@ -83,6 +84,44 @@ async function startServer() {
     } catch (error) {
       console.error("Redis save error for info-data:", error);
       res.status(500).json({ error: "Failed to save info data to Redis" });
+    }
+  });
+
+  // --- RS PARTS DATA API (ajin-rs-parts26) ---
+  app.get("/api/rs-parts", async (req, res) => {
+    if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) {
+      return res.json({
+        files: [],
+        warning: "Redis configuration missing. Using local state.",
+      });
+    }
+    try {
+      const data: any = await redis.get(RS_PARTS_REDIS_KEY);
+      if (!data) {
+        return res.json({ files: [] });
+      }
+      res.json({
+        files: Array.isArray(data.files) ? data.files : [],
+      });
+    } catch (error: any) {
+      console.error("Redis fetch error for rs-parts:", error);
+      res.status(500).json({ error: "Failed to fetch RS Parts data from Redis" });
+    }
+  });
+
+  app.post("/api/rs-parts", async (req, res) => {
+    if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) {
+      return res.json({ success: true, warning: "Redis not configured. Saved locally in memory." });
+    }
+    try {
+      const data = req.body;
+      await redis.set(RS_PARTS_REDIS_KEY, {
+        files: Array.isArray(data?.files) ? data.files : [],
+      });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Redis save error for rs-parts:", error);
+      res.status(500).json({ error: "Failed to save RS Parts data to Redis" });
     }
   });
 
@@ -156,7 +195,7 @@ async function startServer() {
         return res.status(400).json({ error: "Missing required fields: fileName, folder" });
       }
 
-      const validFolders = ["info-pdf", "info-excel", "info-image"];
+      const validFolders = ["info-pdf", "info-excel", "info-image", "RS-pdf"];
       const targetFolder = validFolders.includes(folder) ? folder : "info-pdf";
       const cleanFileName = `${Date.now()}_${fileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
       const key = `${targetFolder}/${cleanFileName}`;
@@ -193,7 +232,8 @@ async function startServer() {
       const { listAllR2Objects } = await import("./src/lib/r2Presign.js").catch(async () => {
         return await import("./src/lib/r2Presign");
       });
-      const result = await listAllR2Objects();
+      const scope = (req.query.scope as string) === "rs-parts" ? "rs-parts" : "info";
+      const result = await listAllR2Objects(scope);
       return res.json(result);
     } catch (e: any) {
       console.error("Sync R2 error:", e);
@@ -210,14 +250,14 @@ async function startServer() {
         return res.status(400).json({ error: "Missing required fields: fileName, folder, base64Data" });
       }
 
-      const validFolders = ["info-pdf", "info-excel", "info-image"];
-      const targetFolder = validFolders.includes(folder) ? (folder as 'info-pdf' | 'info-excel' | 'info-image') : "info-pdf";
+      const validFolders = ["info-pdf", "info-excel", "info-image", "RS-pdf"];
+      const targetFolder = validFolders.includes(folder) ? (folder as 'info-pdf' | 'info-excel' | 'info-image' | 'RS-pdf') : "info-pdf";
 
       // Decode base64 buffer
       const pureBase64 = base64Data.includes(",") ? base64Data.split(",")[1] : base64Data;
       const buffer = Buffer.from(pureBase64, "base64");
       const resolvedContentType = contentType || (
-        targetFolder === "info-pdf" ? "application/pdf" :
+        targetFolder === "info-pdf" || targetFolder === "RS-pdf" ? "application/pdf" :
         targetFolder === "info-excel" ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" :
         "image/jpeg"
       );
@@ -265,7 +305,7 @@ async function startServer() {
 
       if (action === "start") {
         const { fileName, folder, contentType } = req.body;
-        const validFolders = ["info-pdf", "info-excel", "info-image"];
+        const validFolders = ["info-pdf", "info-excel", "info-image", "RS-pdf"];
         const targetFolder = validFolders.includes(folder) ? folder : "info-pdf";
         const cleanFileName = `${Date.now()}_${fileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
         const key = `${targetFolder}/${cleanFileName}`;

@@ -46,7 +46,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       },
     });
 
-    const folders = ['info-pdf', 'info-excel', 'info-image'];
+    const scope = (req.query.scope as string) || 'info';
+    const folders = scope === 'rs-parts' ? ['RS-pdf'] : ['info-pdf', 'info-excel', 'info-image'];
     const allObjects: Array<{
       key: string;
       folder: string;
@@ -78,6 +79,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           if (folder === 'info-pdf') fileType = 'pdf';
           else if (folder === 'info-excel') fileType = 'excel';
           else if (folder === 'info-image') fileType = 'image';
+          else {
+            const lower = displayName.toLowerCase();
+            if (lower.endsWith('.pdf')) fileType = 'pdf';
+            else if (lower.endsWith('.xlsx') || lower.endsWith('.xls') || lower.endsWith('.csv')) fileType = 'excel';
+            else if (/\.(jpg|jpeg|png|webp|gif|heic)$/i.test(lower)) fileType = 'image';
+          }
 
           const fileUrl = publicUrl
             ? `${publicUrl.replace(/\/$/, '')}/${item.Key}`

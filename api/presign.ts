@@ -35,7 +35,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Missing required parameters: fileName, folder' });
     }
 
-    const validFolders = ['info-pdf', 'info-excel', 'info-image'];
+    const validFolders = ['info-pdf', 'info-excel', 'info-image', 'RS-pdf'];
     const targetFolder = validFolders.includes(folder) ? folder : 'info-pdf';
 
     const cleanFileName = `${Date.now()}_${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;

@@ -262,7 +262,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                     className="rounded border-slate-700 text-purple-600 focus:ring-purple-500"
                   />
                   <div>
-                    <span className="text-slate-200 block">INFO 업로드/편집/삭제/완료 권한</span>
+                    <span className="text-slate-200 block">INFO · RS Parts 업로드/편집/삭제 권한</span>
                     <span className="text-[10px] text-slate-400">마스터 & 5200은 기본 허용</span>
                   </div>
                 </label>
@@ -369,7 +369,7 @@ export const UserManagementModal: React.FC<UserManagementModalProps> = ({
                                 : 'bg-slate-800 text-slate-500'
                             }`}
                           >
-                            {u.canManageInfo || isSpecial ? 'Info 업로드/완료 권한' : 'Info 읽기전용'}
+                            {u.canManageInfo || isSpecial ? 'Info·RS Parts 업로드/삭제 권한' : 'Info·RS Parts 읽기전용'}
                           </span>
                         </div>
                       </div>

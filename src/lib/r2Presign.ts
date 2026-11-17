@@ -46,7 +46,7 @@ export function getR2S3Client() {
 }
 
 export async function getR2PresignedPutUrl(
-  folder: 'info-pdf' | 'info-excel' | 'info-image',
+  folder: 'info-pdf' | 'info-excel' | 'info-image' | 'RS-pdf',
   fileName: string,
   contentType?: string
 ): Promise<{ presignedUrl: string; fileUrl: string; key: string } | null> {
@@ -68,13 +68,13 @@ export async function getR2PresignedPutUrl(
   return { presignedUrl, fileUrl, key };
 }
 
-export async function listAllR2Objects() {
+export async function listAllR2Objects(scope: 'info' | 'rs-parts' = 'info') {
   const r2 = getR2S3Client();
   if (!r2) {
     return { success: false, configured: false, count: 0, objects: [] };
   }
 
-  const folders = ['info-pdf', 'info-excel', 'info-image'];
+  const folders = scope === 'rs-parts' ? ['RS-pdf'] : ['info-pdf', 'info-excel', 'info-image'];
   const allObjects: Array<{
     key: string;
     folder: string;
@@ -104,6 +104,12 @@ export async function listAllR2Objects() {
         if (folder === 'info-pdf') fileType = 'pdf';
         else if (folder === 'info-excel') fileType = 'excel';
         else if (folder === 'info-image') fileType = 'image';
+        else {
+          const lower = displayName.toLowerCase();
+          if (lower.endsWith('.pdf')) fileType = 'pdf';
+          else if (lower.endsWith('.xlsx') || lower.endsWith('.xls') || lower.endsWith('.csv')) fileType = 'excel';
+          else if (/\.(jpg|jpeg|png|webp|gif|heic)$/i.test(lower)) fileType = 'image';
+        }
 
         const fileUrl = r2.publicUrl
           ? `${r2.publicUrl.replace(/\/$/, '')}/${item.Key}`

@@ -45,7 +45,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // 1. START Multipart Upload
     if (action === 'start') {
       const { fileName, folder, contentType } = req.body;
-      const validFolders = ['info-pdf', 'info-excel', 'info-image'];
+      const validFolders = ['info-pdf', 'info-excel', 'info-image', 'RS-pdf'];
       const targetFolder = validFolders.includes(folder) ? folder : 'info-pdf';
       const cleanFileName = `${Date.now()}_${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
       const key = `${targetFolder}/${cleanFileName}`;

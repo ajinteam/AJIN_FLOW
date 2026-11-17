@@ -35,15 +35,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Missing required fields: fileName, folder, base64Data' });
     }
 
-    // 1. Separate folders by extension/type: info-pdf, info-excel, info-image
-    const validFolders = ['info-pdf', 'info-excel', 'info-image'];
+    // 1. Separate folders by extension/type: info-pdf, info-excel, info-image, RS-pdf
+    const validFolders = ['info-pdf', 'info-excel', 'info-image', 'RS-pdf'];
     const targetFolder = validFolders.includes(folder) ? folder : 'info-pdf';
 
     const pureBase64 = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
     const buffer = Buffer.from(pureBase64, 'base64');
     const resolvedContentType =
       contentType ||
-      (targetFolder === 'info-pdf'
+      (targetFolder === 'info-pdf' || targetFolder === 'RS-pdf'
         ? 'application/pdf'
         : targetFolder === 'info-excel'
         ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
